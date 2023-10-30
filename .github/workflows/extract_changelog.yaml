@@ -1,0 +1,39 @@
+name: extract changelog
+
+on:
+  workflow_call:
+    inputs:
+      changelogPath:
+        required: true
+        type: string
+        description: The path to the changelog
+    outputs:
+      version:
+        description: The latest version in the changelog
+        value: ${{ jobs.extract.outputs.version }}
+      body:
+        description: The body of the changelog
+        value: ${{ jobs.extract.outputs.body }}
+      prerelease:
+        description: Whether the version is in prerelease
+        value: ${{ jobs.extract.outputs.prerelease }}
+
+jobs:
+  extract:
+    outputs:
+      version: ${{ steps.changelog.outputs.version }}
+      body: ${{ steps.changelog.outputs.changes }}
+      prerelease: ${{ steps.changelog.outputs.status == 'prereleased' }}
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: read changelog
+        id: changelog
+        uses: mindsers/changelog-reader-action@b97ce03a10d9bdbb07beb491c76a5a01d78cd3ef # v2.2.2
+        with:
+          path: ${{ inputs.changelogPath }}

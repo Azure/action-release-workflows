@@ -1,0 +1,33 @@
+name: nightly release
+
+on:
+  workflow_call:
+
+jobs:
+    releaseDate:   
+        runs-on: ubuntu-latest
+        outputs:
+            date: ${{steps.releaseDate.outputs.date}}
+        steps:
+        - name: output current date
+          id: releaseDate
+          run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+    switchBranch:     
+        uses: ./.github/workflows/switch_js_branch.yaml
+        with:
+           version: nightly
+    createRelease:
+        needs: [releaseDate, switchBranch]
+        permissions:
+            contents: write
+        uses: ./.github/workflows/create_release.yaml
+        with:
+            branch: releases/nightly
+            version: nightly-${{needs.releaseDate.outputs.date}}
+            body: |
+                Nightly Build
+                Version: nightly-${{needs.releaseDate.outputs.date}}
+                Release Date: ${{needs.releaseDate.outputs.date}}
+
+                This nightly build is generated from the main branch of the repository and is not intended for testing purposes. It includes incremental changes since the last nightly build.
+                

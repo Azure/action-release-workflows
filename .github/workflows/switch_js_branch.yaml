@@ -1,0 +1,50 @@
+name: switch branch # switches to `releases/nightly` branch or creates it if it doesn't exist 
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+        description: The version of the release
+
+jobs:
+  branch:
+    runs-on: ubuntu-latest
+    env:
+      BRANCH: releases/${{ inputs.version }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: setup git config
+        run: |
+          git config user.name "GitHub Action"
+          git config user.email "github-action@users.noreply.github.com"
+
+      - name: install dependencies
+        run: |
+          npm install --no-bin-links
+
+      - name: build
+        run: npm run build
+
+      - name: switch or create branch
+        run: |
+            if git ls-remote --exit-code --heads origin ${BRANCH} ; then 
+              git checkout ${BRANCH}
+              git checkout -b tmp origin/main
+              git merge -s ours ${BRANCH}
+              git checkout ${BRANCH}
+              git rm -r node_modules --ignore-unmatch
+              git merge tmp
+              git branch -D tmp
+              git push origin ${BRANCH}
+            else
+              git checkout -b ${BRANCH}
+              git push origin ${BRANCH}
+            fi
+            
