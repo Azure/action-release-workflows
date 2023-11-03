@@ -40,6 +40,11 @@ jobs:
       - name: build
         run: npm run build
 
+      - name: Remove lib from gitignore
+        continue-on-error: true
+        run: |
+          sed -i '/lib/d' ./.gitignore
+
       - name: create branch
         run: |
           git checkout -b ${BRANCH}
