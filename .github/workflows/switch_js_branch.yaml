@@ -42,9 +42,14 @@ jobs:
               git rm -r node_modules --ignore-unmatch
               git merge tmp
               git branch -D tmp
-              git push origin ${BRANCH}
             else
               git checkout -b ${BRANCH}
-              git push origin ${BRANCH}
             fi
-            
+      - name: Remove lib from gitignore
+        continue-on-error: true
+        run: |
+          sed -i '/lib/d' ./.gitignore
+
+      - name: Push to branch
+        run: |
+          git push origin ${BRANCH}

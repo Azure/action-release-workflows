@@ -37,5 +37,5 @@ jobs:
           name: ${{ inputs.version }}
           tag: ${{ inputs.version }}
           body: ${{ inputs.body }}
-          commit: ${{ github.ref }}
+          commit: refs/heads/${{ inputs.branch }}
           prerelease: ${{ inputs.prerelease == 'prereleased' }}

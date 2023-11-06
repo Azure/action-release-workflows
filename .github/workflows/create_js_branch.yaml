@@ -43,4 +43,7 @@ jobs:
       - name: create branch
         run: |
           git checkout -b ${BRANCH}
+          sed -i '/lib/d' ./.gitignore
+          git add .
+          git commit -m "build"
           git push origin ${BRANCH}

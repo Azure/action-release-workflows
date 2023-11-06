@@ -33,12 +33,12 @@ jobs:
     with:
         version: ${{ needs.extractChangelog.outputs.version }}
   createRelease:
-    needs: [checkVersion, extractChangelog]
+    needs: [checkVersion, extractChangelog, createBranch]
     permissions:
       contents: write
     if: needs.checkVersion.outputs.exists == 'false'
     uses: ./.github/workflows/create_release.yaml
     with:
-      branch: release/${{ needs.extractChangelog.outputs.version }}
+      branch: releases/${{ needs.extractChangelog.outputs.version }}
       version: ${{ needs.extractChangelog.outputs.version }}
       body: ${{ needs.extractChangelog.outputs.body }}
