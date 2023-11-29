@@ -39,6 +39,6 @@ jobs:
     if: needs.checkVersion.outputs.exists == 'false'
     uses: ./.github/workflows/create_release.yaml
     with:
-      branch: release/v${{ needs.extractChangelog.outputs.version }}
+      branch: releases/v${{ needs.extractChangelog.outputs.version }}
       version: v${{ needs.extractChangelog.outputs.version }}
       body: ${{ needs.extractChangelog.outputs.body }}
