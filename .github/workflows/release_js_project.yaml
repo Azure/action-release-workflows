@@ -33,7 +33,7 @@ jobs:
     with:
         version: v${{ needs.extractChangelog.outputs.version }}
   createRelease:
-    needs: [checkVersion, extractChangelog]
+    needs: [checkVersion, extractChangelog, createBranch]
     permissions:
       contents: write
     if: needs.checkVersion.outputs.exists == 'false'
