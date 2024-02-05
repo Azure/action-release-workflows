@@ -20,7 +20,7 @@ jobs:
       exists: ${{ steps.tag-exists.outputs.exists }}
     steps:
       - name: check if tag exists
-        uses: mukunku/tag-exists-action@abb37bcb9359ec998248497e66be881bdcd2bd62 # v1.5.0
+        uses: mukunku/tag-exists-action@bdad1eaa119ce71b150b952c97351c75025c06a9 # v1.6.0
         id: tag-exists
         with:
           tag: ${{ needs.changelog.outputs.version }}
