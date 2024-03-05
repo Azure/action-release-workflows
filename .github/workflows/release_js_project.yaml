@@ -48,6 +48,7 @@ jobs:
        contents: write
      needs: [extractChangelog, createRelease]
      steps:
+       - uses: actions/checkout@v4
        - name: get major version tag
          id: major-version-tag
          env:
@@ -58,12 +59,12 @@ jobs:
          continue-on-error: true
          env:
             GH_TOKEN: ${{ github.token }}
-            MAJOR_VERSION_TAG: steps.major-version-tag.outputs.MAJOR_VERSION_TAG
+            MAJOR_VERSION_TAG: ${{ steps.major-version-tag.outputs.MAJOR_VERSION_TAG }}
          run:
            gh release delete --cleanup-tag -y MAJOR_VERSION_TAG
        - name: create new major tag
          env:
             GH_TOKEN: ${{ github.token }}
-            MAJOR_VERSION_TAG: steps.major-version-tag.outputs.MAJOR_VERSION_TAG
+            MAJOR_VERSION_TAG: ${{ steps.major-version-tag.outputs.MAJOR_VERSION_TAG }}
          run:
            gh release create MAJOR_VERSION_TAG
