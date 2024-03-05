@@ -54,7 +54,7 @@ jobs:
          env:
            NEW_RELEASE_TAG: ${{ needs.extractChangelog.outputs.version }}
          run:
-           echo "MAJOR_VERSION_TAG=${NEW_RELEASE_TAG%%.*}" >> "$GITHUB_OUTPUT"
+           echo "MAJOR_VERSION_TAG=v${NEW_RELEASE_TAG%%.*}" >> "$GITHUB_OUTPUT"
        - name: delete old major tag
          continue-on-error: true
          env:
@@ -67,4 +67,4 @@ jobs:
             GH_TOKEN: ${{ github.token }}
             MAJOR_VERSION_TAG: ${{ steps.major-version-tag.outputs.MAJOR_VERSION_TAG }}
          run:
-           gh release create v$MAJOR_VERSION_TAG
+           gh release create $MAJOR_VERSION_TAG
