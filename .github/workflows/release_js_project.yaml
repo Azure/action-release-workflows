@@ -61,10 +61,12 @@ jobs:
             GH_TOKEN: ${{ github.token }}
             MAJOR_VERSION_TAG: ${{ steps.major-version-tag.outputs.MAJOR_VERSION_TAG }}
          run:
-           gh release delete --cleanup-tag -y $MAJOR_VERSION_TAG
+           git push origin :refs/tags/$MAJOR_VERSION_TAG
        - name: create new major tag
          env:
             GH_TOKEN: ${{ github.token }}
             MAJOR_VERSION_TAG: ${{ steps.major-version-tag.outputs.MAJOR_VERSION_TAG }}
          run:
-           gh release create $MAJOR_VERSION_TAG --target releases/v${{ needs.extractChangelog.outputs.version }} -n "Latest $MAJOR_VERSION_TAG Release"
+           git checkout releases/v${{ needs.extractChangelog.outputs.version }}
+           git tag -a $MAJOR_VERSION_TAG  -m "Latest $MAJOR_VERSION_TAG Release"
+           git push origin regs/tags/$MAJOR_VERSION_TAG
