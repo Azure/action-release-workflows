@@ -31,7 +31,10 @@ on:
 
 jobs:
    release:
-      uses: bosesuneha/action-release-workflows/.github/workflows/release_js_project.yaml@main
+      uses: Azure/action-release-workflows/.github/workflows/release_js_project.yaml@main
+      permissions:
+         actions: read
+         contents: write
       with:
          changelogPath: ./CHANGELOG.md
    
