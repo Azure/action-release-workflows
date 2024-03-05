@@ -49,6 +49,8 @@ jobs:
      needs: [extractChangelog, createRelease]
      steps:
        - uses: actions/checkout@v4
+         with:
+           ref: releases/v${{ needs.extractChangelog.outputs.version }}
        - name: get major version tag
          id: major-version-tag
          env:
@@ -67,6 +69,5 @@ jobs:
             GH_TOKEN: ${{ github.token }}
             MAJOR_VERSION_TAG: ${{ steps.major-version-tag.outputs.MAJOR_VERSION_TAG }}
          run:
-           git checkout releases/v${{ needs.extractChangelog.outputs.version }}
            git tag -a $MAJOR_VERSION_TAG  -m "Latest $MAJOR_VERSION_TAG Release"
            git push origin regs/tags/$MAJOR_VERSION_TAG
