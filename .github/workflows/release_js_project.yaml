@@ -67,4 +67,4 @@ jobs:
             GH_TOKEN: ${{ github.token }}
             MAJOR_VERSION_TAG: ${{ steps.major-version-tag.outputs.MAJOR_VERSION_TAG }}
          run:
-           gh release create $MAJOR_VERSION_TAG
+           gh release create $MAJOR_VERSION_TAG --target releases/v${{ needs.extractChangelog.outputs.version }}
