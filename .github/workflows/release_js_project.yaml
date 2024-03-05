@@ -42,3 +42,26 @@ jobs:
       branch: releases/v${{ needs.extractChangelog.outputs.version }}
       version: v${{ needs.extractChangelog.outputs.version }}
       body: ${{ needs.extractChangelog.outputs.body }}
+  updateMajorTag:
+     runs-on: ubuntu-latest
+     permissions:
+       contents: write
+     needs: [extractChangelog, createRelease]
+     steps:
+       - name: get major version tag
+         id: major-version-tag
+         env:
+           NEW_RELEASE_TAG: ${{ needs.extractChangelog.outputs.version }}
+         run:
+           echo "MAJOR_VERSION_TAG=${NEW_RELEASE_TAG%%.*}" >> "$GITHUB_OUTPUT"
+       - name: delete old major tag
+         continue-on-error: true
+         env:
+            MAJOR_VERSION_TAG: steps.major-version-tag.outputs.MAJOR_VERSION_TAG
+         run:
+           gh release delete --cleanup-tag -y MAJOR_VERSION_TAG
+       - name: create new major tag
+         env:
+            MAJOR_VERSION_TAG: steps.major-version-tag.outputs.MAJOR_VERSION_TAG
+         run:
+           gh release create MAJOR_VERSION_TAG
