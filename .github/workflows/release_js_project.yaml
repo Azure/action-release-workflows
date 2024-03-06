@@ -68,6 +68,6 @@ jobs:
          env:
             GH_TOKEN: ${{ github.token }}
             MAJOR_VERSION_TAG: ${{ steps.major-version-tag.outputs.MAJOR_VERSION_TAG }}
-         run:
+         run: |
            git tag -a $MAJOR_VERSION_TAG  -m "Latest $MAJOR_VERSION_TAG Release"
            git push origin regs/tags/$MAJOR_VERSION_TAG
