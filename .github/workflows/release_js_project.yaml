@@ -70,4 +70,6 @@ jobs:
             MAJOR_VERSION_TAG: ${{ steps.major-version-tag.outputs.MAJOR_VERSION_TAG }}
          run: |
            git tag -a $MAJOR_VERSION_TAG  -m "Latest $MAJOR_VERSION_TAG Release"
+           git config user.name 'github-actions[bot]'
+           git config user.email 'github-actions[bot]@users.noreply.github.com'
            git push origin regs/tags/$MAJOR_VERSION_TAG
