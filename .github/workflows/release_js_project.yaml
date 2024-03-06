@@ -46,7 +46,7 @@ jobs:
      runs-on: ubuntu-latest
      permissions:
        contents: write
-     needs: [extractChangelog, createRelease]
+     needs: [extractChangelog, createBranch, createRelease]
      steps:
        - uses: actions/checkout@v4
          with:
