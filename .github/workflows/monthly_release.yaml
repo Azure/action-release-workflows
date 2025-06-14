@@ -1,0 +1,82 @@
+name: Monthly Auto Release
+
+on:
+  workflow_call: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.bump.outputs.new_version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest tag
+        id: latest
+        run: |
+          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "latest=$latest_tag" >> $GITHUB_OUTPUT
+
+      - name: Bump patch version
+        id: bump
+        run: |
+          version="${{ steps.latest.outputs.latest }}"
+          IFS='.' read -r major minor patch <<<"${version#v}"
+          patch=$((patch + 1))
+          new_version="v$major.$minor.$patch"
+          echo "new_version=$new_version" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog from merged PRs
+        id: changelog
+        run: |
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          gh pr list --state merged --json title,number,mergedAt \
+            --jq '.[] | "- \(.title) (#\(.number))"' >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update CHANGELOG.md if it exists
+        run: |
+          if [[ -f CHANGELOG.md ]]; then
+            echo "Updating CHANGELOG.md"
+            DATE=$(date +'%Y-%m-%d')
+            VERSION="${{ steps.bump.outputs.new_version }}"
+            echo -e "## $VERSION - $DATE\n\n${{ steps.changelog.outputs.body }}\n" | cat - CHANGELOG.md > temp && mv temp CHANGELOG.md
+
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add CHANGELOG.md
+            git commit -m "docs: update changelog for $VERSION"
+            git push origin HEAD
+          else
+            echo "No CHANGELOG.md file found. Skipping update."
+          fi
+
+      - name: Create and push version tag
+        run: |
+          git tag ${{ steps.bump.outputs.new_version }}
+          git push origin ${{ steps.bump.outputs.new_version }}
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.bump.outputs.new_version }}
+          name: "Release ${{ steps.bump.outputs.new_version }}"
+          body: ${{ steps.changelog.outputs.body }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update major version tag
+        run: |
+          version=${{ steps.bump.outputs.new_version }}
+          major_tag="v${version#v}"
+          major_tag="v${major_tag%%.*}"
+
+          git push origin :refs/tags/$major_tag || true
+          git tag -fa $major_tag -m "Latest $major_tag release"
+          git push origin $major_tag
