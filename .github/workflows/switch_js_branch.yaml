@@ -27,7 +27,7 @@ jobs:
 
       - name: install dependencies
         run: |
-          npm install --no-bin-links
+          npm install
 
       - name: build
         run: npm run build
