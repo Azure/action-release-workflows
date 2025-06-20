@@ -4,9 +4,12 @@ on:
   workflow_call: {}
 
 jobs:
-  release:
+  version-check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
+      latest_version: ${{ steps.latest.outputs.latest }}
       new_version: ${{ steps.bump.outputs.new_version }}
 
     steps:
@@ -30,6 +33,19 @@ jobs:
           new_version="v$major.$minor.$patch"
           echo "new_version=$new_version" >> $GITHUB_OUTPUT
 
+  changelog-generation:
+    runs-on: ubuntu-latest
+    needs: version-check
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      changelog_body: ${{ steps.changelog.outputs.body }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Generate changelog from merged PRs
         id: changelog
         run: |
@@ -40,13 +56,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  update-changelog:
+    runs-on: ubuntu-latest
+    needs: [version-check, changelog-generation]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Update CHANGELOG.md if it exists
         run: |
           if [[ -f CHANGELOG.md ]]; then
             echo "Updating CHANGELOG.md"
             DATE=$(date +'%Y-%m-%d')
-            VERSION="${{ steps.bump.outputs.new_version }}"
-            echo -e "## $VERSION - $DATE\n\n${{ steps.changelog.outputs.body }}\n" | cat - CHANGELOG.md > temp && mv temp CHANGELOG.md
+            VERSION="${{ needs.version-check.outputs.new_version }}"
+            echo -e "## $VERSION - $DATE\n\n${{ needs.changelog-generation.outputs.changelog_body }}\n" | cat - CHANGELOG.md > temp && mv temp CHANGELOG.md
 
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -57,23 +85,60 @@ jobs:
             echo "No CHANGELOG.md file found. Skipping update."
           fi
 
+  create-tag:
+    runs-on: ubuntu-latest
+    needs: [version-check, update-changelog]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pull latest changes
+        run: git pull origin ${{ github.ref_name }}
+
       - name: Create and push version tag
         run: |
-          git tag ${{ steps.bump.outputs.new_version }}
-          git push origin ${{ steps.bump.outputs.new_version }}
+          git tag ${{ needs.version-check.outputs.new_version }}
+          git push origin ${{ needs.version-check.outputs.new_version }}
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [version-check, changelog-generation, create-tag]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.bump.outputs.new_version }}
-          name: "Release ${{ steps.bump.outputs.new_version }}"
-          body: ${{ steps.changelog.outputs.body }}
+          tag_name: ${{ needs.version-check.outputs.new_version }}
+          name: "Release ${{ needs.version-check.outputs.new_version }}"
+          body: ${{ needs.changelog-generation.outputs.changelog_body }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  update-major-tag:
+    runs-on: ubuntu-latest
+    needs: [version-check, create-release]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Update major version tag
         run: |
-          version=${{ steps.bump.outputs.new_version }}
+          version=${{ needs.version-check.outputs.new_version }}
           major_tag="v${version#v}"
           major_tag="v${major_tag%%.*}"
 
