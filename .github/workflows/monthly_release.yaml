@@ -1,0 +1,224 @@
+name: Monthly Auto Release
+
+on:
+   workflow_call: {}
+
+concurrency:
+   group: auto-release
+   cancel-in-progress: false
+
+jobs:
+   prepare-release:
+      name: Prepare Release
+      runs-on: ubuntu-latest
+      permissions:
+         contents: read
+      outputs:
+         new_version: ${{ steps.bump.outputs.new_version }}
+         changelog: ${{ steps.changelog.outputs.changelog }}
+         latest_tag: ${{ steps.get_tag.outputs.latest_tag }}
+
+      steps:
+         - name: Checkout code
+           uses: actions/checkout@v4
+           with:
+              fetch-depth: 0
+
+         - name: Set up Node.js
+           uses: actions/setup-node@v4
+           with:
+              node-version: '20'
+
+         - name: Get latest tag
+           id: get_tag
+           run: |
+              latest=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
+                       | sort -V | tail -n1)
+              LATEST_TAG=${latest:-v0.0.0}
+              echo "LATEST_TAG=$LATEST_TAG" >> $GITHUB_ENV
+              echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+         - name: Bump patch version
+           id: bump
+           run: |
+              # bump package.json & lockfile without tagging
+              npm version patch --no-git-tag-version
+
+              # capture and expose the new version (with leading 'v')
+              NEW_VERSION="v$(node -p "require('./package.json').version")"
+              echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+         - name: Build changelog from merged PRs
+           id: changelog
+           uses: mikepenz/release-changelog-builder-action@v4
+           with:
+              configuration: .github/changelog-config.json
+              fromTag: ${{ steps.get_tag.outputs.latest_tag }}
+              toTag: HEAD
+           env:
+              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+   checkVersion:
+      name: Check if Version Exists
+      needs: prepare-release
+      runs-on: ubuntu-latest
+      permissions:
+         contents: read
+      outputs:
+         exists: ${{ steps.tag-exists.outputs.exists }}
+      steps:
+         - name: Check if tag exists
+           uses: mukunku/tag-exists-action@bdad1eaa119ce71b150b952c97351c75025c06a9 # v1.6.0
+           id: tag-exists
+           with:
+              tag: ${{ needs.prepare-release.outputs.new_version }}
+           env:
+              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+   commit-release:
+      name: Commit Release Changes
+      runs-on: ubuntu-latest
+      needs: [prepare-release, checkVersion]
+      if: needs.checkVersion.outputs.exists == 'false'
+      permissions:
+         contents: write
+
+      steps:
+         - name: Checkout code
+           uses: actions/checkout@v4
+           with:
+              fetch-depth: 0
+
+         - name: Set up Node.js
+           uses: actions/setup-node@v4
+           with:
+              node-version: '20'
+
+         - name: Apply version bump and update files
+           env:
+              NEW_VERSION: ${{ needs.prepare-release.outputs.new_version }}
+              CHANGELOG_BODY: ${{ needs.prepare-release.outputs.changelog }}
+           run: |
+              # Apply the version bump
+              npm version $NEW_VERSION --no-git-tag-version
+
+              # Update CHANGELOG.md if present
+              if [[ -f CHANGELOG.md ]]; then
+                DATE=$(date +'%Y-%m-%d')
+                ENTRY="## [${NEW_VERSION#v}] - $DATE"$'\n\n'"${CHANGELOG_BODY%$'\n'}"
+
+                # Insert right under "# Changelog"
+                awk -v e="$ENTRY" '
+                  /^# Changelog/ {
+                    print
+                    print ""
+                    printf e
+                    next
+                  }
+                  { print }
+                ' CHANGELOG.md > tmp && mv tmp CHANGELOG.md
+                echo "Updated CHANGELOG.md"
+              else
+                echo "No CHANGELOG.md—skipping."
+              fi
+
+         - name: Commit and push changes
+           run: |
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+
+              # Add all changed files
+              git add .
+
+              # Check if there are changes to commit
+              if git diff --staged --quiet; then
+                echo "No changes to commit"
+              else
+                git commit -m "chore: release ${{ needs.prepare-release.outputs.new_version }}"
+                git push origin main
+                echo "Changes committed and pushed"
+              fi
+
+   create-tags:
+      name: Create Release Tags
+      runs-on: ubuntu-latest
+      needs: [prepare-release, checkVersion, commit-release]
+      if: needs.checkVersion.outputs.exists == 'false'
+      permissions:
+         contents: write
+
+      steps:
+         - name: Checkout main branch
+           uses: actions/checkout@v4
+           with:
+              ref: main
+              fetch-depth: 0
+
+         - name: Create and push version tag
+           run: |
+              NEW_VERSION="${{ needs.prepare-release.outputs.new_version }}"
+
+              # Create and push the full version tag
+              git tag "$NEW_VERSION"
+              git push origin "$NEW_VERSION"
+
+   create-release:
+      name: Create GitHub Release
+      runs-on: ubuntu-latest
+      needs: [prepare-release, checkVersion, create-tags]
+      if: needs.checkVersion.outputs.exists == 'false'
+      permissions:
+         contents: write
+
+      steps:
+         - name: Checkout code
+           uses: actions/checkout@v4
+
+         - name: Publish GitHub Release
+           uses: ncipollo/release-action@v1
+           with:
+              tag: ${{ needs.prepare-release.outputs.new_version }}
+              name: ${{ needs.prepare-release.outputs.new_version }}
+              body: ${{ needs.prepare-release.outputs.changelog }}
+           env:
+              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+   update-major-tag:
+      name: Update Major Version Tag
+      runs-on: ubuntu-latest
+      needs: [prepare-release, create-release]
+      permissions:
+         contents: write
+
+      steps:
+         - name: Checkout main branch
+           uses: actions/checkout@v4
+           with:
+              ref: main
+              fetch-depth: 0
+
+         - name: Get major version tag
+           id: major-version-tag
+           env:
+              NEW_RELEASE_TAG: ${{ needs.prepare-release.outputs.new_version }}
+           run: |
+              # Extract major version (e.g., v1.2.3 -> v1)
+              echo "MAJOR_VERSION_TAG=${NEW_RELEASE_TAG%%.*}" >> "$GITHUB_OUTPUT"
+
+         - name: Delete old major tag
+           continue-on-error: true
+           env:
+              GH_TOKEN: ${{ github.token }}
+              MAJOR_VERSION_TAG: ${{ steps.major-version-tag.outputs.MAJOR_VERSION_TAG }}
+           run: |
+              git push origin :refs/tags/$MAJOR_VERSION_TAG
+
+         - name: Create new major tag
+           env:
+              GH_TOKEN: ${{ github.token }}
+              MAJOR_VERSION_TAG: ${{ steps.major-version-tag.outputs.MAJOR_VERSION_TAG }}
+           run: |
+              git config user.name 'github-actions[bot]'
+              git config user.email 'github-actions[bot]@users.noreply.github.com'
+              git tag -a $MAJOR_VERSION_TAG -m "Latest $MAJOR_VERSION_TAG Release"
+              git push origin refs/tags/$MAJOR_VERSION_TAG

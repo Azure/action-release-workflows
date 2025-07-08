@@ -1,0 +1,15 @@
+{
+   "categories": [
+      {
+         "title": "### Changed",
+         "labels": []
+      }
+   ],
+   "template": "#{{CHANGELOG}}",
+   "pr_template": "- ##{{NUMBER}} #{{TITLE}}",
+   "empty_template": "### Changed\n\n- No changes since last release",
+   "sort": {
+      "order": "ASC",
+      "on_property": "mergedAt"
+   }
+}
