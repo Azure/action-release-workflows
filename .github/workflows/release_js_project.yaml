@@ -48,7 +48,7 @@ jobs:
        contents: write
      needs: [extractChangelog, createBranch, createRelease]
      steps:
-       - uses: actions/checkout@v5
+       - uses: actions/checkout@v6
          with:
            ref: releases/v${{ needs.extractChangelog.outputs.version }}
        - name: get major version tag
