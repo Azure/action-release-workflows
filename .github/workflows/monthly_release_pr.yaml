@@ -1,0 +1,250 @@
+name: Create Monthly Release PR
+
+on:
+    workflow_call:
+        inputs:
+            increment:
+                description: "Version increment type"
+                required: false
+                type: string
+                default: "patch"
+            base_branch:
+                description: "Base branch for the PR"
+                required: false
+                type: string
+                default: "main"
+
+jobs:
+    create-release-pr:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+            pull-requests: write
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+                  fetch-tags: true
+
+            - name: Configure Git
+              run: |
+                  git config user.name "github-actions[bot]"
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
+
+            - name: Calculate version and dates
+              id: version
+              run: |
+                  LATEST_TAG=$(git tag --sort=-v:refname | head -n 1)
+                  LATEST_TAG=${LATEST_TAG:-0.0.0}
+
+                  # Detect and extract version prefix
+                  [[ "$LATEST_TAG" =~ ^(v?)([0-9]+\.[0-9]+\.[0-9]+)$ ]] || {
+                    echo "Error: Invalid tag format: $LATEST_TAG"
+                    exit 1
+                  }
+                  VERSION_PREFIX="${BASH_REMATCH[1]}"
+                  CURRENT_VERSION="${BASH_REMATCH[2]}"
+
+                  # Get release date
+                  if [ "$LATEST_TAG" = "0.0.0" ]; then
+                    LAST_DATE=$(git log --reverse --format=%as | head -n 1)
+                  else
+                    LAST_DATE=$(git log -1 --format=%as "$LATEST_TAG" 2>/dev/null || git log --reverse --format=%as | head -n 1)
+                  fi
+
+                  # Calculate next version
+                  IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
+                  case "${{ inputs.increment }}" in
+                    major) major=$((major + 1)); minor=0; patch=0 ;;
+                    minor) minor=$((minor + 1)); patch=0 ;;
+                    *) patch=$((patch + 1)) ;;
+                  esac
+
+                  NEW_VERSION="${VERSION_PREFIX}$major.$minor.$patch"
+
+                  {
+                    echo "current=${VERSION_PREFIX}${CURRENT_VERSION}"
+                    echo "next=$NEW_VERSION"
+                    echo "last_date=$LAST_DATE"
+                    echo "current_date=$(date +%Y-%m-%d)"
+                  } >> "$GITHUB_OUTPUT"
+
+                  echo "Version: ${VERSION_PREFIX}${CURRENT_VERSION} -> $NEW_VERSION"
+
+            - name: Generate changelog content
+              id: changelog
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  LAST_DATE="${{ steps.version.outputs.last_date }}"
+                  NEW_VERSION="${{ steps.version.outputs.next }}"
+                  CURRENT_DATE="${{ steps.version.outputs.current_date }}"
+
+                  echo "Fetching PRs merged since $LAST_DATE"
+
+                  # Fetch and process merged PRs
+                  PR_DATA=$(gh pr list --state merged --limit 200 --json number,title,mergedAt,url,author) || {
+                    echo "Error: Failed to fetch PR data"
+                    exit 1
+                  }
+
+                  # Filter and format PRs
+                  JQ_OUTPUT=$(echo "$PR_DATA" | jq -r "
+                    [.[] | select(.mergedAt >= \"$LAST_DATE\")] as \$filtered |
+                    ([\$filtered[] | select(.author.login != \"dependabot[bot]\" and .author.login != \"app/dependabot\")] | if length > 0 then map(\"- [#\" + (.number | tostring) + \"](\" + .url + \") \" + .title) | join(\"\\n\") else \"\" end),
+                    ([\$filtered[] | select(.author.login == \"dependabot[bot]\" or .author.login == \"app/dependabot\")] | length)
+                  ") || {
+                    echo "Error: Failed to process PR data"
+                    exit 1
+                  }
+
+                  echo "RAW JQ_OUTPUT:"
+                  echo "$JQ_OUTPUT" | cat -A
+                  echo "---"
+
+                  DEPENDABOT_COUNT=$(echo "$JQ_OUTPUT" | tail -n 1)
+                  PR_ENTRIES=$(echo "$JQ_OUTPUT" | head -n -1)
+
+                  # Check if there are any changes
+                  if [ -z "$PR_ENTRIES" ] && [ "$DEPENDABOT_COUNT" -eq 0 ]; then
+                    echo "No changes since last release"
+                    echo "has_changes=false" >> "$GITHUB_OUTPUT"
+                    exit 0
+                  fi
+
+                  # Build changelog content
+                  VERSION_HEADER="## [${NEW_VERSION#v}] - $CURRENT_DATE"
+                  CHANGELOG_FILE=$(mktemp)
+                  echo -e "$VERSION_HEADER\n" > "$CHANGELOG_FILE"
+
+                  [ -n "$PR_ENTRIES" ] && echo "$PR_ENTRIES" >> "$CHANGELOG_FILE"
+                  if [ "$DEPENDABOT_COUNT" -gt 0 ]; then
+                    if [ "$DEPENDABOT_COUNT" -eq 1 ]; then
+                      echo "- 1 Dependabot PR" >> "$CHANGELOG_FILE"
+                    else
+                      echo "- $DEPENDABOT_COUNT Dependabot PRs" >> "$CHANGELOG_FILE"
+                    fi
+                  fi
+
+                  {
+                    echo "has_changes=true"
+                    echo "content<<EOF"
+                    cat "$CHANGELOG_FILE"
+                    echo "EOF"
+                  } >> "$GITHUB_OUTPUT"
+
+            - name: Update files and create branch
+              if: steps.changelog.outputs.has_changes == 'true'
+              id: branch
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  NEW_VERSION="${{ steps.version.outputs.next }}"
+                  BRANCH_NAME="release-prep/$NEW_VERSION"
+                  PACKAGE_VERSION="${NEW_VERSION#v}"
+
+                  # Create branch
+                  git checkout -b "$BRANCH_NAME"
+
+                  # Update CHANGELOG.md
+                  [ ! -f "CHANGELOG.md" ] && echo -e "# Change Log\n" > CHANGELOG.md
+
+                  INSERT_LINE=$(grep -n "^## \[" CHANGELOG.md | head -n 1 | cut -d: -f1)
+                  if [ -n "$INSERT_LINE" ]; then
+                    {
+                      head -n $((INSERT_LINE - 1)) CHANGELOG.md
+                      echo "${{ steps.changelog.outputs.content }}"
+                      echo ""
+                      tail -n +${INSERT_LINE} CHANGELOG.md
+                    } > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md
+                  else
+                    echo "${{ steps.changelog.outputs.content }}" >> CHANGELOG.md
+                  fi
+
+                  grep -q "## \[$PACKAGE_VERSION\]" CHANGELOG.md || {
+                    echo "Error: Failed to add version to CHANGELOG"
+                    exit 1
+                  }
+
+                  # Update package files
+                  for file in package.json package-lock.json; do
+                    if [ -f "$file" ]; then
+                      if [ "$file" = "package.json" ]; then
+                        jq_expr='.version = $version'
+                      else
+                        jq_expr='.version = $version | .packages[""].version = $version'
+                      fi
+
+                      jq --arg version "$PACKAGE_VERSION" "$jq_expr" "$file" > "${file}.tmp" || {
+                        echo "Error: Failed to update $file"
+                        exit 1
+                      }
+                      mv "${file}.tmp" "$file" || {
+                        echo "Error: Failed to replace $file"
+                        exit 1
+                      }
+                    fi
+                  done
+
+                  # Run npm format if available
+                  if npm run format; then
+                    echo "✓ Formatting completed"
+                  else
+                    echo "ℹ No format script available or formatting not needed"
+                  fi
+
+                  # Stage all changes and commit
+                  git add -A
+                  git commit -m "chore: prepare release $NEW_VERSION"
+                  git push origin "$BRANCH_NAME"
+
+                  echo "name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+
+            - name: Create Pull Request
+              if: steps.changelog.outputs.has_changes == 'true'
+              id: create-pr
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  VERSION: ${{ steps.version.outputs.next }}
+                  BRANCH: ${{ steps.branch.outputs.name }}
+                  BASE_BRANCH: ${{ inputs.base_branch }}
+                  CHANGELOG_CONTENT: ${{ steps.changelog.outputs.content }}
+              run: |
+                  # Build PR body with environment variables
+                  PR_BODY="## Release $VERSION
+
+                  This automated PR prepares the release for version \`$VERSION\`.
+
+                  ### Changes in this release:
+
+                  $CHANGELOG_CONTENT
+
+                  ### Checklist before merging:
+                  - [ ] Verify changelog entries are accurate
+                  - [ ] Check for any breaking changes
+                  - [ ] Ensure all tests pass
+                  - [ ] Update version in any additional files if needed"
+
+                  # Create PR
+                  gh pr create \
+                    --title "chore: release $VERSION" \
+                    --base "$BASE_BRANCH" \
+                    --head "$BRANCH" \
+                    --body "$PR_BODY"
+
+            - name: Cleanup on failure
+              if: failure() && steps.branch.outcome == 'success'
+              run: |
+                  BRANCH_NAME="${{ steps.branch.outputs.name }}"
+                  if [ -n "$BRANCH_NAME" ]; then
+                    echo "Cleaning up branch $BRANCH_NAME due to workflow failure"
+                    
+                    # Delete remote branch if it exists
+                    git push origin --delete "$BRANCH_NAME" 2>/dev/null || echo "Remote branch does not exist or already deleted"
+                    
+                    # Switch back to base branch and delete local branch
+                    git checkout "${{ inputs.base_branch }}" 2>/dev/null || true
+                    git branch -D "$BRANCH_NAME" 2>/dev/null || echo "Local branch does not exist or already deleted"
+                  fi
