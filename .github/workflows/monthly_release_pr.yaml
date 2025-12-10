@@ -20,6 +20,10 @@ jobs:
         permissions:
             contents: write
             pull-requests: write
+        env:
+            NEW_VERSION: ""
+            PACKAGE_VERSION: ""
+            BRANCH_NAME: ""
 
         steps:
             - name: Checkout repository
@@ -71,7 +75,7 @@ jobs:
                     echo "current_date=$(date +%Y-%m-%d)"
                   } >> "$GITHUB_OUTPUT"
 
-                  echo "Version: ${VERSION_PREFIX}${CURRENT_VERSION} -> $NEW_VERSION"
+                  echo "📦 Version: ${VERSION_PREFIX}${CURRENT_VERSION} -> $NEW_VERSION"
 
             - name: Generate changelog content
               id: changelog
@@ -82,7 +86,7 @@ jobs:
                   NEW_VERSION="${{ steps.version.outputs.next }}"
                   CURRENT_DATE="${{ steps.version.outputs.current_date }}"
 
-                  echo "Fetching PRs merged since $LAST_DATE"
+                  echo "📋 Fetching PRs merged since $LAST_DATE"
 
                   # Fetch and process merged PRs
                   PR_DATA=$(gh pr list --state merged --limit 200 --json number,title,mergedAt,url,author) || {
@@ -100,16 +104,12 @@ jobs:
                     exit 1
                   }
 
-                  echo "RAW JQ_OUTPUT:"
-                  echo "$JQ_OUTPUT" | cat -A
-                  echo "---"
-
                   DEPENDABOT_COUNT=$(echo "$JQ_OUTPUT" | tail -n 1)
                   PR_ENTRIES=$(echo "$JQ_OUTPUT" | head -n -1)
 
                   # Check if there are any changes
                   if [ -z "$PR_ENTRIES" ] && [ "$DEPENDABOT_COUNT" -eq 0 ]; then
-                    echo "No changes since last release"
+                    echo "ℹ️  No changes since last release"
                     echo "has_changes=false" >> "$GITHUB_OUTPUT"
                     exit 0
                   fi
@@ -135,20 +135,31 @@ jobs:
                     echo "EOF"
                   } >> "$GITHUB_OUTPUT"
 
-            - name: Update files and create branch
+            - name: Setup Node.js
+              if: steps.changelog.outputs.has_changes == 'true' && hashFiles('package.json') != ''
+              uses: actions/setup-node@v4
+              with:
+                  node-version: '20'
+
+            - name: Install dependencies
+              if: steps.changelog.outputs.has_changes == 'true' && hashFiles('package.json') != ''
+              run: npm ci || npm install
+
+            - name: Create release branch
               if: steps.changelog.outputs.has_changes == 'true'
               id: branch
-              env:
-                  GH_TOKEN: ${{ github.token }}
               run: |
-                  NEW_VERSION="${{ steps.version.outputs.next }}"
-                  BRANCH_NAME="release-prep/$NEW_VERSION"
-                  PACKAGE_VERSION="${NEW_VERSION#v}"
-
-                  # Create branch
+                  BRANCH_NAME="release-prep/${{ steps.version.outputs.next }}"
                   git checkout -b "$BRANCH_NAME"
+                  echo "🌿 Created branch: $BRANCH_NAME"
+                  echo "name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
 
-                  # Update CHANGELOG.md
+            - name: Update CHANGELOG.md
+              if: steps.changelog.outputs.has_changes == 'true'
+              run: |
+                  PACKAGE_VERSION="${{ steps.version.outputs.next }}"
+                  PACKAGE_VERSION="${PACKAGE_VERSION#v}"
+
                   [ ! -f "CHANGELOG.md" ] && echo -e "# Change Log\n" > CHANGELOG.md
 
                   INSERT_LINE=$(grep -n "^## \[" CHANGELOG.md | head -n 1 | cut -d: -f1)
@@ -168,39 +179,38 @@ jobs:
                     exit 1
                   }
 
-                  # Update package files
-                  for file in package.json package-lock.json; do
-                    if [ -f "$file" ]; then
-                      if [ "$file" = "package.json" ]; then
-                        jq_expr='.version = $version'
-                      else
-                        jq_expr='.version = $version | .packages[""].version = $version'
-                      fi
+            - name: Update package files
+              if: steps.changelog.outputs.has_changes == 'true' && hashFiles('package.json') != ''
+              run: |
+                  PACKAGE_VERSION="${{ steps.version.outputs.next }}"
+                  PACKAGE_VERSION="${PACKAGE_VERSION#v}"
 
-                      jq --arg version "$PACKAGE_VERSION" "$jq_expr" "$file" > "${file}.tmp" || {
-                        echo "Error: Failed to update $file"
-                        exit 1
-                      }
-                      mv "${file}.tmp" "$file" || {
-                        echo "Error: Failed to replace $file"
-                        exit 1
-                      }
+                  for file in package.json package-lock.json; do
+                    [ ! -f "$file" ] && continue
+
+                    if [ "$file" = "package.json" ]; then
+                      jq_expr='.version = $version'
+                    else
+                      jq_expr='.version = $version | .packages[""].version = $version'
                     fi
+
+                    jq --arg version "$PACKAGE_VERSION" "$jq_expr" "$file" > "${file}.tmp" && mv "${file}.tmp" "$file" || {
+                      echo "Error: Failed to update $file"
+                      exit 1
+                    }
                   done
 
-                  # Run npm format if available
-                  if npm run format; then
-                    echo "✓ Formatting completed"
-                  else
-                    echo "ℹ No format script available or formatting not needed"
-                  fi
+            - name: Format code
+              if: steps.changelog.outputs.has_changes == 'true' && hashFiles('package.json') != ''
+              continue-on-error: true
+              run: npm run format
 
-                  # Stage all changes and commit
+            - name: Commit and push changes
+              if: steps.changelog.outputs.has_changes == 'true'
+              run: |
                   git add -A
-                  git commit -m "chore: prepare release $NEW_VERSION"
-                  git push origin "$BRANCH_NAME"
-
-                  echo "name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+                  git commit -m "chore: prepare release ${{ steps.version.outputs.next }}"
+                  git push origin "${{ steps.branch.outputs.name }}"
 
             - name: Create Pull Request
               if: steps.changelog.outputs.has_changes == 'true'
@@ -239,12 +249,8 @@ jobs:
               run: |
                   BRANCH_NAME="${{ steps.branch.outputs.name }}"
                   if [ -n "$BRANCH_NAME" ]; then
-                    echo "Cleaning up branch $BRANCH_NAME due to workflow failure"
-                    
-                    # Delete remote branch if it exists
-                    git push origin --delete "$BRANCH_NAME" 2>/dev/null || echo "Remote branch does not exist or already deleted"
-                    
-                    # Switch back to base branch and delete local branch
+                    echo "🧹 Cleaning up branch $BRANCH_NAME due to workflow failure"
+                    git push origin --delete "$BRANCH_NAME" 2>/dev/null || true
                     git checkout "${{ inputs.base_branch }}" 2>/dev/null || true
-                    git branch -D "$BRANCH_NAME" 2>/dev/null || echo "Local branch does not exist or already deleted"
+                    git branch -D "$BRANCH_NAME" 2>/dev/null || true
                   fi
