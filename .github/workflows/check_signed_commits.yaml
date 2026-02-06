@@ -12,6 +12,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Exit on error, undefined vars, and pipe failures (ensures failures in piped commands like `jq | head` are caught)
           set -euo pipefail
 
           echo "::group::Fetching PR commits"
