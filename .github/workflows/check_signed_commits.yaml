@@ -12,14 +12,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Fetch all commits in this PR
+          set -euo pipefail
+
+          echo "::group::Fetching PR commits"
+          echo "Repository: ${{ github.repository }}"
+          echo "PR Number: ${{ github.event.pull_request.number }}"
           commits=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits --paginate)
+          commit_count=$(echo "$commits" | jq length)
+          echo "Found $commit_count commits in PR"
+          echo "::endgroup::"
+
+          echo "::group::Commit verification status"
+          echo "$commits" | jq -r '.[] | "  \(.sha[0:7]) | verified: \(.commit.verification.verified) | \(.commit.message | split("\n")[0])"'
+          echo "::endgroup::"
 
           # Find unsigned commits
           unsigned=$(echo "$commits" | jq -r '.[] | select(.commit.verification.verified == false) | "- `\(.sha[0:7])` \(.commit.message | split("\n")[0])"')
+          unsigned_count=$(echo "$commits" | jq '[.[] | select(.commit.verification.verified == false)] | length')
+
+          echo "::group::Signature summary"
+          echo "Total commits: $commit_count"
+          echo "Unsigned commits: $unsigned_count"
+          echo "::endgroup::"
 
           if [ -n "$unsigned" ]; then
-            echo "::error::Found unsigned commits in this PR"
+            echo "::error::Found $unsigned_count unsigned commits in this PR"
             echo ""
             echo "Unsigned commits:"
             echo "$unsigned"
@@ -32,18 +49,20 @@ jobs:
 
           Please sign your commits before merging. See [GitHub's guide on signing commits](https://docs.github.com/en/authentication/managing-commit-signature-verification/signing-commits)."
 
-            # Check for existing comment from this workflow
+            echo "::group::Checking for existing bot comment"
             existing_comment=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --paginate | \
               jq -r '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("Unsigned Commits Detected"))) | .id' | head -1)
+            echo "Existing comment ID: ${existing_comment:-none}"
+            echo "::endgroup::"
 
             if [ -n "$existing_comment" ]; then
-              # Update existing comment
+              echo "Updating existing comment (ID: $existing_comment)..."
               gh api repos/${{ github.repository }}/issues/comments/$existing_comment \
                 --method PATCH \
                 -f body="$comment_body"
               echo "Updated existing comment"
             else
-              # Create new comment
+              echo "Creating new comment..."
               gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
                 -f body="$comment_body"
               echo "Created new comment"
@@ -51,13 +70,16 @@ jobs:
 
             exit 1
           else
-            echo "All commits are signed ✓"
+            echo "All $commit_count commits are signed ✓"
 
-            # Remove any existing unsigned commits comment if all commits are now signed
+            echo "::group::Checking for outdated bot comment to remove"
             existing_comment=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --paginate | \
               jq -r '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("Unsigned Commits Detected"))) | .id' | head -1)
+            echo "Existing comment ID: ${existing_comment:-none}"
+            echo "::endgroup::"
 
             if [ -n "$existing_comment" ]; then
+              echo "Removing outdated comment (ID: $existing_comment)..."
               gh api repos/${{ github.repository }}/issues/comments/$existing_comment --method DELETE
               echo "Removed outdated unsigned commits comment"
             fi
