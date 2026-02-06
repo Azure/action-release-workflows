@@ -1,0 +1,64 @@
+name: Check Signed Commits
+
+on:
+  workflow_call:
+
+jobs:
+  check-signatures:
+    name: Verify Commit Signatures
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for unsigned commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Fetch all commits in this PR
+          commits=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits --paginate)
+
+          # Find unsigned commits
+          unsigned=$(echo "$commits" | jq -r '.[] | select(.commit.verification.verified == false) | "- `\(.sha[0:7])` \(.commit.message | split("\n")[0])"')
+
+          if [ -n "$unsigned" ]; then
+            echo "::error::Found unsigned commits in this PR"
+            echo ""
+            echo "Unsigned commits:"
+            echo "$unsigned"
+
+            # Build comment body
+            comment_body="⚠️ **Unsigned Commits Detected**
+
+          The following commits are not signed:
+          $unsigned
+
+          Please sign your commits before merging. See [GitHub's guide on signing commits](https://docs.github.com/en/authentication/managing-commit-signature-verification/signing-commits)."
+
+            # Check for existing comment from this workflow
+            existing_comment=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --paginate | \
+              jq -r '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("Unsigned Commits Detected"))) | .id' | head -1)
+
+            if [ -n "$existing_comment" ]; then
+              # Update existing comment
+              gh api repos/${{ github.repository }}/issues/comments/$existing_comment \
+                --method PATCH \
+                -f body="$comment_body"
+              echo "Updated existing comment"
+            else
+              # Create new comment
+              gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+                -f body="$comment_body"
+              echo "Created new comment"
+            fi
+
+            exit 1
+          else
+            echo "All commits are signed ✓"
+
+            # Remove any existing unsigned commits comment if all commits are now signed
+            existing_comment=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --paginate | \
+              jq -r '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("Unsigned Commits Detected"))) | .id' | head -1)
+
+            if [ -n "$existing_comment" ]; then
+              gh api repos/${{ github.repository }}/issues/comments/$existing_comment --method DELETE
+              echo "Removed outdated unsigned commits comment"
+            fi
+          fi
