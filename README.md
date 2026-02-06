@@ -1,5 +1,9 @@
 # Release Workflows
 
+[![Latest Release](https://img.shields.io/github/v/release/Azure/action-release-workflows?label=Latest%20Release)](https://github.com/Azure/action-release-workflows/releases/latest)
+[![GitHub License](https://img.shields.io/github/license/Azure/action-release-workflows)](LICENSE)
+[![GitHub Issues](https://img.shields.io/github/issues/Azure/action-release-workflows)](https://github.com/Azure/action-release-workflows/issues)
+
 Reusable GitHub Actions workflows for automating releases and enforcing commit policies.
 
 ## Available Workflows
