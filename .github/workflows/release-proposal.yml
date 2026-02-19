@@ -1,0 +1,454 @@
+name: Release Proposal
+
+on:
+  schedule:
+    - cron: '0 9 * * 1' # Monday 9am UTC
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Override version bump type (leave empty for AI inference)'
+        required: false
+        type: choice
+        options:
+          - ''
+          - patch
+          - minor
+          - major
+      changelog_path:
+        description: 'Path to CHANGELOG.md'
+        required: false
+        default: './CHANGELOG.md'
+        type: string
+
+permissions:
+  models: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  propose-release:
+    runs-on: ubuntu-latest
+    env:
+      CHANGELOG_PATH: ${{ inputs.changelog_path || './CHANGELOG.md' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Get latest release tag
+        id: latest-tag
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo "v0.0.0")
+          echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          if [ "$LATEST_TAG" = "v0.0.0" ]; then
+            TAG_DATE="1970-01-01"
+          else
+            TAG_DATE=$(git log -1 --format='%aI' "$LATEST_TAG" | cut -dT -f1)
+          fi
+          echo "tag_date=$TAG_DATE" >> "$GITHUB_OUTPUT"
+          echo "Latest tag: $LATEST_TAG (date: $TAG_DATE)"
+
+      - name: Query merged PRs since tag
+        id: query-prs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST_TAG: ${{ steps.latest-tag.outputs.tag }}
+          TAG_DATE: ${{ steps.latest-tag.outputs.tag_date }}
+        run: |
+          set -euo pipefail
+          PRS=$(gh pr list \
+            --state merged \
+            --base main \
+            --search "merged:>=${TAG_DATE}" \
+            --json number,title,author,url,body \
+            --limit 200)
+          echo "$PRS" > /tmp/merged_prs.json
+          PR_COUNT=$(echo "$PRS" | jq 'length')
+          echo "pr_count=$PR_COUNT" >> "$GITHUB_OUTPUT"
+          echo "Found $PR_COUNT merged PRs since $LATEST_TAG"
+
+      - name: Early exit if no PRs
+        if: steps.query-prs.outputs.pr_count == '0'
+        run: |
+          echo "## No merged PRs since ${{ steps.latest-tag.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "No release proposal needed." >> "$GITHUB_STEP_SUMMARY"
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+
+      - name: Classify PRs
+        if: steps.query-prs.outputs.pr_count != '0'
+        id: classify
+        run: |
+          set -euo pipefail
+          DEPENDABOT_PRS=$(jq '[.[] | select(.author.login == "dependabot[bot]")]' /tmp/merged_prs.json)
+          NON_DEPENDABOT_PRS=$(jq '[.[] | select(.author.login != "dependabot[bot]")]' /tmp/merged_prs.json)
+          echo "$DEPENDABOT_PRS" > /tmp/dependabot_prs.json
+          echo "$NON_DEPENDABOT_PRS" > /tmp/non_dependabot_prs.json
+          DEPENDABOT_COUNT=$(echo "$DEPENDABOT_PRS" | jq 'length')
+          NON_DEPENDABOT_COUNT=$(echo "$NON_DEPENDABOT_PRS" | jq 'length')
+          echo "dependabot_count=$DEPENDABOT_COUNT" >> "$GITHUB_OUTPUT"
+          echo "non_dependabot_count=$NON_DEPENDABOT_COUNT" >> "$GITHUB_OUTPUT"
+          ALL_DEPENDABOT="false"
+          if [ "$NON_DEPENDABOT_COUNT" -eq 0 ]; then
+            ALL_DEPENDABOT="true"
+          fi
+          echo "all_dependabot=$ALL_DEPENDABOT" >> "$GITHUB_OUTPUT"
+          echo "Dependabot PRs: $DEPENDABOT_COUNT, Non-dependabot PRs: $NON_DEPENDABOT_COUNT"
+
+      - name: Close stale release PRs
+        if: steps.query-prs.outputs.pr_count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          STALE_PRS=$(gh pr list --state open --head "automated-release/" --json number --jq '.[].number' || true)
+          for pr_number in $STALE_PRS; do
+            echo "Closing stale release PR #${pr_number}"
+            gh pr close "$pr_number" --comment "Superseded by a newer release proposal." || true
+          done
+
+      - name: Prepare AI prompt
+        if: steps.classify.outputs.all_dependabot == 'false' && inputs.version_type == ''
+        id: ai-prompt
+        run: |
+          set -euo pipefail
+          {
+            echo "Non-dependabot PRs to analyze:"
+            echo ""
+            jq -r '.[] | "PR #\(.number): \(.title)\nURL: \(.url)\nBody: \(.body // "No description")\n---"' /tmp/non_dependabot_prs.json
+          } > /tmp/ai_prompt.txt
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "prompt<<$EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/ai_prompt.txt >> "$GITHUB_OUTPUT"
+          echo "$EOF" >> "$GITHUB_OUTPUT"
+
+      - name: AI version classification
+        if: steps.classify.outputs.all_dependabot == 'false' && inputs.version_type == ''
+        id: ai-classify
+        uses: actions/ai-inference@a380166897b5408b8fb7dddd148142794cb5624a # v2.0.6
+        continue-on-error: true
+        with:
+          model: openai/gpt-4o
+          max-tokens: 1024
+          temperature: 0
+          system-prompt: |
+            You are a semver versioning expert for the ${{ github.repository }} project.
+
+            Analyze the following merged pull requests and determine the appropriate semver bump.
+
+            Rules:
+            - PATCH: bug fixes, documentation updates, internal refactors with no behavior change
+            - MINOR: new features, new inputs/outputs, new capabilities that are backward-compatible
+            - MAJOR: breaking changes to inputs/outputs, removed features, incompatible API changes
+
+            You MUST respond with exactly one line in this format:
+            VERSION_BUMP: patch|minor|major
+
+            Then provide a brief reasoning on subsequent lines.
+          prompt: ${{ steps.ai-prompt.outputs.prompt }}
+
+      - name: Determine version bump
+        if: steps.query-prs.outputs.pr_count != '0'
+        id: bump
+        env:
+          AI_RESPONSE: ${{ steps.ai-classify.outputs.response }}
+          AI_OUTCOME: ${{ steps.ai-classify.outcome }}
+          ALL_DEPENDABOT: ${{ steps.classify.outputs.all_dependabot }}
+          MANUAL_VERSION_TYPE: ${{ inputs.version_type }}
+        run: |
+          set -euo pipefail
+          NEEDS_DECISION_LABEL="false"
+          AI_REASONING=""
+
+          if [ -n "$MANUAL_VERSION_TYPE" ]; then
+            BUMP_TYPE="$MANUAL_VERSION_TYPE"
+            AI_REASONING="Manual override via workflow_dispatch: ${BUMP_TYPE} bump."
+          elif [ "$ALL_DEPENDABOT" = "true" ]; then
+            BUMP_TYPE="patch"
+            AI_REASONING="All PRs are from dependabot — automatic patch bump."
+          elif [ "$AI_OUTCOME" = "success" ] && [ -n "$AI_RESPONSE" ]; then
+            PARSED=$(echo "$AI_RESPONSE" | grep -oiE 'VERSION_BUMP:[[:space:]]*(patch|minor|major)' | head -1 | grep -oiE '(patch|minor|major)' | tr '[:upper:]' '[:lower:]' || true)
+            if [ -n "$PARSED" ]; then
+              BUMP_TYPE="$PARSED"
+              AI_REASONING="$AI_RESPONSE"
+            else
+              BUMP_TYPE="minor"
+              AI_REASONING="AI response could not be parsed — defaulting to minor bump."
+              NEEDS_DECISION_LABEL="true"
+            fi
+          else
+            BUMP_TYPE="minor"
+            AI_REASONING="AI inference step failed — defaulting to minor bump."
+            NEEDS_DECISION_LABEL="true"
+          fi
+
+          echo "bump_type=$BUMP_TYPE" >> "$GITHUB_OUTPUT"
+          echo "needs_decision_label=$NEEDS_DECISION_LABEL" >> "$GITHUB_OUTPUT"
+
+          echo "$AI_REASONING" > /tmp/ai_reasoning.txt
+
+          echo "Bump type: $BUMP_TYPE"
+
+      - name: Compute new version
+        if: steps.query-prs.outputs.pr_count != '0'
+        id: version
+        env:
+          LATEST_TAG: ${{ steps.latest-tag.outputs.tag }}
+          BUMP_TYPE: ${{ steps.bump.outputs.bump_type }}
+        run: |
+          set -euo pipefail
+          VERSION="${LATEST_TAG#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+
+          case "$BUMP_TYPE" in
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "New version: $NEW_VERSION"
+
+      - name: Generate CHANGELOG entry
+        if: steps.query-prs.outputs.pr_count != '0'
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+          ALL_DEPENDABOT: ${{ steps.classify.outputs.all_dependabot }}
+        run: |
+          set -euo pipefail
+          TODAY=$(date -u +%Y-%m-%d)
+
+          {
+            echo "## [${NEW_VERSION}] - ${TODAY}"
+            echo ""
+
+            NON_DEP_COUNT=$(jq 'length' /tmp/non_dependabot_prs.json)
+            if [ "$NON_DEP_COUNT" -gt 0 ]; then
+              echo "### Added"
+              echo ""
+              jq -r '.[] | "- #\(.number) [\(.title)](\(.url))"' /tmp/non_dependabot_prs.json
+              echo ""
+            fi
+
+            DEP_COUNT=$(jq 'length' /tmp/dependabot_prs.json)
+            if [ "$DEP_COUNT" -gt 0 ]; then
+              echo "### Changed"
+              echo ""
+              jq -r '.[] | "- #\(.number) [\(.title)](\(.url))"' /tmp/dependabot_prs.json
+              echo ""
+            fi
+          } > /tmp/new_changelog_entry.txt
+
+          awk '
+            /^# Change/ {
+              print
+              print ""
+              while ((getline line < "/tmp/new_changelog_entry.txt") > 0) print line
+              next
+            }
+            { print }
+          ' "$CHANGELOG_PATH" > /tmp/changelog_updated.md
+          mv /tmp/changelog_updated.md "$CHANGELOG_PATH"
+
+      - name: Bump package.json version
+        if: steps.query-prs.outputs.pr_count != '0'
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+        run: |
+          if [ -f package.json ]; then
+            jq --arg v "$NEW_VERSION" '.version = $v' package.json > /tmp/package_updated.json
+            mv /tmp/package_updated.json package.json
+            echo "Updated package.json to $NEW_VERSION"
+          else
+            echo "No package.json found — skipping"
+          fi
+
+      - name: Bump package-lock.json version
+        if: steps.query-prs.outputs.pr_count != '0'
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+        run: |
+          if [ -f package-lock.json ]; then
+            jq --arg v "$NEW_VERSION" '
+              .version = $v |
+              if .packages[""] then .packages[""].version = $v else . end
+            ' package-lock.json > /tmp/package_lock_updated.json
+            mv /tmp/package_lock_updated.json package-lock.json
+            echo "Updated package-lock.json to $NEW_VERSION"
+          else
+            echo "No package-lock.json found — skipping"
+          fi
+
+      - name: Run prettier
+        if: steps.query-prs.outputs.pr_count != '0'
+        continue-on-error: true
+        run: |
+          FILES="${CHANGELOG_PATH}"
+          [ -f package.json ] && FILES="$FILES package.json"
+          [ -f package-lock.json ] && FILES="$FILES package-lock.json"
+          npx prettier --write $FILES
+
+      - name: Verify CHANGELOG
+        if: steps.query-prs.outputs.pr_count != '0'
+        id: verify-changelog
+        uses: mindsers/changelog-reader-action@32aa5b4c155d76c94e4ec883a223c947b2f02656 # v2.2.3
+        with:
+          path: ${{ env.CHANGELOG_PATH }}
+          version: ${{ steps.version.outputs.new_version }}
+
+      - name: Assert CHANGELOG verification
+        if: steps.query-prs.outputs.pr_count != '0'
+        env:
+          PARSED_VERSION: ${{ steps.verify-changelog.outputs.version }}
+          PARSED_CHANGES: ${{ steps.verify-changelog.outputs.changes }}
+          EXPECTED_VERSION: ${{ steps.version.outputs.new_version }}
+        run: |
+          set -euo pipefail
+          if [ "$PARSED_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "::error::CHANGELOG verification failed: expected version $EXPECTED_VERSION but got $PARSED_VERSION"
+            exit 1
+          fi
+          if [ -z "$PARSED_CHANGES" ]; then
+            echo "::error::CHANGELOG verification failed: changes section is empty"
+            exit 1
+          fi
+          echo "CHANGELOG verified: version=$PARSED_VERSION, changes present"
+
+      - name: Create signed commit via GitHub API
+        if: steps.query-prs.outputs.pr_count != '0'
+        id: signed-commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+        run: |
+          set -euo pipefail
+
+          BRANCH="automated-release/v${NEW_VERSION}"
+          REPO="${{ github.repository }}"
+          MAIN_SHA=$(gh api "repos/${REPO}/git/ref/heads/main" --jq '.object.sha')
+
+          # Build list of files to commit
+          declare -a FILES_TO_COMMIT
+          FILES_TO_COMMIT+=("${CHANGELOG_PATH#./}")
+          [ -f package.json ] && FILES_TO_COMMIT+=("package.json")
+          [ -f package-lock.json ] && FILES_TO_COMMIT+=("package-lock.json")
+
+          # Create blobs for each changed file
+          TREE_ENTRIES="[]"
+          for file in "${FILES_TO_COMMIT[@]}"; do
+            CONTENT=$(base64 -w 0 "$file")
+            BLOB_SHA=$(gh api "repos/${REPO}/git/blobs" \
+              --method POST \
+              -f content="$CONTENT" \
+              -f encoding="base64" \
+              --jq '.sha')
+            TREE_ENTRIES=$(echo "$TREE_ENTRIES" | jq \
+              --arg path "$file" \
+              --arg sha "$BLOB_SHA" \
+              '. + [{"path": $path, "mode": "100644", "type": "blob", "sha": $sha}]')
+            echo "Created blob for $file: $BLOB_SHA"
+          done
+
+          # Create tree
+          TREE_SHA=$(gh api "repos/${REPO}/git/trees" \
+            --method POST \
+            --input <(jq -n --arg base "$MAIN_SHA" --argjson tree "$TREE_ENTRIES" \
+              '{"base_tree": $base, "tree": $tree}') \
+            --jq '.sha')
+          echo "Created tree: $TREE_SHA"
+
+          # Create signed commit (commits created via the API are automatically signed by GitHub)
+          COMMIT_SHA=$(gh api "repos/${REPO}/git/commits" \
+            --method POST \
+            --input <(jq -n \
+              --arg msg "chore(release): bump version to ${NEW_VERSION}" \
+              --arg tree "$TREE_SHA" \
+              --arg parent "$MAIN_SHA" \
+              '{"message": $msg, "tree": $tree, "parents": [$parent]}') \
+            --jq '.sha')
+          echo "Created signed commit: $COMMIT_SHA"
+
+          # Create branch pointing to the signed commit
+          gh api "repos/${REPO}/git/refs" \
+            --method POST \
+            --input <(jq -n \
+              --arg ref "refs/heads/${BRANCH}" \
+              --arg sha "$COMMIT_SHA" \
+              '{"ref": $ref, "sha": $sha}')
+          echo "Created branch: $BRANCH"
+
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Create pull request
+        if: steps.query-prs.outputs.pr_count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+          BUMP_TYPE: ${{ steps.bump.outputs.bump_type }}
+          NEEDS_DECISION_LABEL: ${{ steps.bump.outputs.needs_decision_label }}
+          DEPENDABOT_COUNT: ${{ steps.classify.outputs.dependabot_count }}
+          NON_DEPENDABOT_COUNT: ${{ steps.classify.outputs.non_dependabot_count }}
+        run: |
+          set -euo pipefail
+
+          AI_REASONING=$(cat /tmp/ai_reasoning.txt)
+
+          MAJOR_WARNING=""
+          if [ "$BUMP_TYPE" = "major" ]; then
+            MAJOR_WARNING=$'\n> [!CAUTION]\n> This is a **MAJOR** version bump. Please review carefully for breaking changes.\n'
+          fi
+
+          LABELS="release"
+          if [ "$NEEDS_DECISION_LABEL" = "true" ]; then
+            LABELS="release,needs-version-decision"
+          fi
+
+          {
+            echo "## Release Proposal: v${NEW_VERSION}"
+            echo ""
+            echo "**Bump type:** \`${BUMP_TYPE}\`"
+            echo "**Dependabot PRs:** ${DEPENDABOT_COUNT}"
+            echo "**Non-dependabot PRs:** ${NON_DEPENDABOT_COUNT}"
+            if [ -n "$MAJOR_WARNING" ]; then
+              echo "$MAJOR_WARNING"
+            fi
+            echo ""
+            echo "### Included PRs"
+            echo ""
+            if [ "$NON_DEPENDABOT_COUNT" -gt 0 ]; then
+              echo "**Non-dependabot PRs:**"
+              echo ""
+              jq -r '.[] | "- #\(.number) \(.title)"' /tmp/non_dependabot_prs.json
+              echo ""
+            fi
+            if [ "$DEPENDABOT_COUNT" -gt 0 ]; then
+              echo "**Dependabot PRs:**"
+              echo ""
+              jq -r '.[] | "- #\(.number) \(.title)"' /tmp/dependabot_prs.json
+              echo ""
+            fi
+            echo "### Version Decision Reasoning"
+            echo ""
+            echo "$AI_REASONING"
+            echo ""
+            echo "---"
+            echo ""
+            echo "> [!WARNING]"
+            echo "> Merging this PR will trigger the release pipeline."
+          } > /tmp/pr_body.md
+
+          gh pr create \
+            --title "chore(release): v${NEW_VERSION}" \
+            --body-file /tmp/pr_body.md \
+            --head "automated-release/v${NEW_VERSION}" \
+            --label "$LABELS"
