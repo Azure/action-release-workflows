@@ -94,16 +94,27 @@ jobs:
           echo "all_dependabot=$ALL_DEPENDABOT" >> "$GITHUB_OUTPUT"
           echo "Dependabot PRs: $DEPENDABOT_COUNT, Non-dependabot PRs: $NON_DEPENDABOT_COUNT"
 
-      - name: Close stale release PRs
+      - name: Close stale release PRs and branches
         if: steps.query-prs.outputs.pr_count != '0'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          STALE_PRS=$(gh pr list --state open --head "automated-release/" --json number --jq '.[].number' || true)
-          for pr_number in $STALE_PRS; do
-            echo "Closing stale release PR #${pr_number}"
+          REPO="${{ github.repository }}"
+
+          # Close any open release PRs
+          STALE_PRS=$(gh pr list --state open --head "automated-release/" --json number,headRefName --jq '.[] | "\(.number) \(.headRefName)"' || true)
+          while IFS=' ' read -r pr_number branch_name; do
+            [ -z "$pr_number" ] && continue
+            echo "Closing stale release PR #${pr_number} (branch: ${branch_name})"
             gh pr close "$pr_number" --comment "Superseded by a newer release proposal." || true
+          done <<< "$STALE_PRS"
+
+          # Delete any existing automated-release/* branches
+          STALE_BRANCHES=$(gh api "repos/${REPO}/git/matching-refs/heads/automated-release/" --jq '.[].ref' 2>/dev/null || true)
+          for ref in $STALE_BRANCHES; do
+            echo "Deleting stale branch ref: ${ref}"
+            gh api "repos/${REPO}/git/${ref}" --method DELETE || true
           done
 
       - name: Prepare AI prompt
