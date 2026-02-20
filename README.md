@@ -46,6 +46,47 @@ gh workflow run "Release Proposal" -f version_type=minor
 gh workflow run "Release Proposal" -f version_type=patch -f changelog_path=./docs/CHANGELOG.md
 ```
 
+### Usage: Reusable Workflow (workflow_call)
+
+Call from another repository's workflow:
+
+```yaml
+name: Release Proposal
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version bump type'
+        required: false
+        type: choice
+        options:
+          - ''
+          - patch
+          - minor
+          - major
+      changelog_path:
+        description: 'Path to CHANGELOG.md'
+        required: false
+        default: './CHANGELOG.md'
+        type: string
+
+jobs:
+  release-proposal:
+    uses: Azure/action-release-workflows/.github/workflows/release-proposal.yml@main
+    with:
+      version_type: ${{ inputs.version_type || '' }}
+      changelog_path: ${{ inputs.changelog_path || './CHANGELOG.md' }}
+    permissions:
+      models: read
+      contents: write
+      pull-requests: write
+```
+
+> **Note:** The caller must declare `permissions` — reusable workflows cannot request their own permissions.
+
 ### Usage: Dispatch Action (workflow_dispatch)
 
 ```yaml

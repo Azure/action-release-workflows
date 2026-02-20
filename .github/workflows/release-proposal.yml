@@ -19,6 +19,18 @@ on:
         required: false
         default: './CHANGELOG.md'
         type: string
+  workflow_call:
+    inputs:
+      version_type:
+        description: 'Override version bump type: patch, minor, or major (leave empty for AI inference)'
+        required: false
+        type: string
+        default: ''
+      changelog_path:
+        description: 'Path to CHANGELOG.md'
+        required: false
+        type: string
+        default: './CHANGELOG.md'
 
 permissions:
   models: read
