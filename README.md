@@ -10,7 +10,8 @@ Reusable GitHub Actions workflows for automated releases. Includes AI-powered ve
 
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
-| `release-proposal.yml` | Schedule (Mon 9am UTC) / `workflow_dispatch` | Scans merged PRs, classifies version bump via AI, creates a release PR |
+| `release-proposal.yml` | `workflow_call` | Reusable: scans merged PRs, classifies version bump via AI, creates a release PR |
+| `release-proposal-dispatch.yml` | Schedule (Mon 9am UTC) / `workflow_dispatch` | Thin wrapper that calls `release-proposal.yml` for this repo |
 | `release.yaml` | Push to `main` (CHANGELOG.md) / `workflow_dispatch` | Extracts changelog, creates GitHub release |
 | `extract_changelog.yaml` | `workflow_call` | Reusable: parses CHANGELOG.md for version + body |
 | `create_release.yaml` | `workflow_call` | Reusable: creates a GitHub release with tag |
@@ -46,9 +47,9 @@ gh workflow run "Release Proposal" -f version_type=minor
 gh workflow run "Release Proposal" -f version_type=patch -f changelog_path=./docs/CHANGELOG.md
 ```
 
-### Usage: Reusable Workflow (workflow_call)
+### Usage: Reusable Workflow
 
-Call from another repository's workflow:
+Call from your repository's workflow:
 
 ```yaml
 name: Release Proposal
@@ -79,42 +80,6 @@ jobs:
     with:
       version_type: ${{ inputs.version_type || '' }}
       changelog_path: ${{ inputs.changelog_path || './CHANGELOG.md' }}
-    permissions:
-      models: read
-      contents: write
-      pull-requests: write
-```
-
-> **Note:** The caller must declare `permissions` — reusable workflows cannot request their own permissions.
-
-### Usage: Dispatch Action (workflow_dispatch)
-
-```yaml
-name: Trigger Release
-
-on:
-  workflow_dispatch:
-    inputs:
-      version_type:
-        description: 'Version bump type'
-        required: true
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
-      changelog_path:
-        description: 'Path to CHANGELOG.md'
-        required: false
-        default: './CHANGELOG.md'
-        type: string
-
-jobs:
-  release:
-    uses: <owner>/<repo>/.github/workflows/release-proposal.yml@main
-    with:
-      version_type: ${{ inputs.version_type }}
-      changelog_path: ${{ inputs.changelog_path }}
     permissions:
       models: read
       contents: write

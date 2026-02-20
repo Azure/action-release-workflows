@@ -1,0 +1,32 @@
+name: Release Proposal Dispatch
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Override version bump type (leave empty for AI inference)'
+        required: false
+        type: choice
+        options:
+          - ''
+          - patch
+          - minor
+          - major
+      changelog_path:
+        description: 'Path to CHANGELOG.md'
+        required: false
+        default: './CHANGELOG.md'
+        type: string
+
+jobs:
+  release-proposal:
+    uses: ./.github/workflows/release-proposal.yml
+    with:
+      version_type: ${{ inputs.version_type || '' }}
+      changelog_path: ${{ inputs.changelog_path || './CHANGELOG.md' }}
+    permissions:
+      models: read
+      contents: write
+      pull-requests: write
