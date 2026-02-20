@@ -20,6 +20,15 @@ jobs:
     env:
       CHANGELOG_PATH: ${{ inputs.changelog_path || './CHANGELOG.md' }}
     steps:
+      - name: Detect default branch
+        id: repo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DEFAULT_BRANCH=$(gh api "repos/${{ github.repository }}" --jq '.default_branch')
+          echo "default_branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "Default branch: $DEFAULT_BRANCH"
+
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -46,9 +55,10 @@ jobs:
           TAG_DATE: ${{ steps.latest-tag.outputs.tag_date }}
         run: |
           set -euo pipefail
+          DEFAULT_BRANCH="${{ steps.repo.outputs.default_branch }}"
           PRS=$(gh pr list \
             --state merged \
-            --base main \
+            --base "$DEFAULT_BRANCH" \
             --search "merged:>=${TAG_DATE}" \
             --json number,title,author,url,body \
             --limit 200)
@@ -324,7 +334,8 @@ jobs:
 
           BRANCH="automated-release/v${NEW_VERSION}"
           REPO="${{ github.repository }}"
-          MAIN_SHA=$(gh api "repos/${REPO}/git/ref/heads/main" --jq '.object.sha')
+          DEFAULT_BRANCH="${{ steps.repo.outputs.default_branch }}"
+          MAIN_SHA=$(gh api "repos/${REPO}/git/ref/heads/${DEFAULT_BRANCH}" --jq '.object.sha')
 
           # Build list of files to commit
           declare -a FILES_TO_COMMIT
