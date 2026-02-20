@@ -413,6 +413,11 @@ jobs:
             LABELS="release,needs-version-decision"
           fi
 
+          # Ensure required labels exist
+          for label in ${LABELS//,/ }; do
+            gh label create "$label" --force 2>/dev/null || true
+          done
+
           {
             echo "## Release Proposal: v${NEW_VERSION}"
             echo ""
