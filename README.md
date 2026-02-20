@@ -10,8 +10,8 @@ Reusable GitHub Actions workflows for automated releases. Includes AI-powered ve
 
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
-| `release-proposal.yml` | `workflow_call` | Reusable: scans merged PRs, classifies version bump via AI, creates a release PR |
-| `release-proposal-dispatch.yml` | Schedule (Mon 9am UTC) / `workflow_dispatch` | Thin wrapper that calls `release-proposal.yml` for this repo |
+| `release-proposal.yaml` | `workflow_call` | Reusable: scans merged PRs, classifies version bump via AI, creates a release PR |
+| `release-proposal-dispatch.yaml` | Schedule (Mon 9am UTC) / `workflow_dispatch` | Thin wrapper that calls `release-proposal.yaml` for this repo |
 | `release.yaml` | Push to `main` (CHANGELOG.md) / `workflow_dispatch` | Extracts changelog, creates GitHub release |
 | `extract_changelog.yaml` | `workflow_call` | Reusable: parses CHANGELOG.md for version + body |
 | `create_release.yaml` | `workflow_call` | Reusable: creates a GitHub release with tag |
@@ -23,7 +23,7 @@ Reusable GitHub Actions workflows for automated releases. Includes AI-powered ve
 
 ## Release Proposal Workflow
 
-The `release-proposal.yml` workflow automates the creation of release PRs with:
+The `release-proposal.yaml` workflow automates the creation of release PRs with:
 
 - **AI-powered version classification** using [`actions/ai-inference`](https://github.com/actions/ai-inference) to analyze merged PRs and suggest `patch`, `minor`, or `major` bumps
 - **Dependabot auto-detection** — if all merged PRs are from dependabot, automatically selects `patch`
@@ -76,7 +76,7 @@ on:
 
 jobs:
   release-proposal:
-    uses: Azure/action-release-workflows/.github/workflows/release-proposal.yml@main
+    uses: Azure/action-release-workflows/.github/workflows/release-proposal.yaml@main
     with:
       version_type: ${{ inputs.version_type || '' }}
       changelog_path: ${{ inputs.changelog_path || './CHANGELOG.md' }}
