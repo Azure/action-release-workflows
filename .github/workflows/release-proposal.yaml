@@ -244,7 +244,7 @@ jobs:
 
             NON_DEP_COUNT=$(jq 'length' /tmp/non_dependabot_prs.json)
             if [ "$NON_DEP_COUNT" -gt 0 ]; then
-              echo "### Added"
+              echo "### Changed"
               echo ""
               jq -r '.[] | "- #\(.number) [\(.title)](\(.url))"' /tmp/non_dependabot_prs.json
               echo ""
@@ -252,7 +252,7 @@ jobs:
 
             DEP_COUNT=$(jq 'length' /tmp/dependabot_prs.json)
             if [ "$DEP_COUNT" -gt 0 ]; then
-              echo "### Changed"
+              echo "### Dependabot"
               echo ""
               jq -r '.[] | "- #\(.number) [\(.title)](\(.url))"' /tmp/dependabot_prs.json
               echo ""
