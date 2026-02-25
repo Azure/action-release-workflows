@@ -20,9 +20,9 @@ contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additio
 
 ## Release Process
 
-Releases are automated via GitHub Actions workflows:
+Releases follow a **propose → review → merge** flow. The AI-generated release proposal is a _suggestion_ — it always requires manual review and approval before a release is published.
 
-### 1. Release Proposal (automated)
+### 1. Release Proposal (suggestion for review)
 
 The [Release Proposal Dispatch](.github/workflows/release-proposal-dispatch.yaml) workflow runs on a schedule (Mondays at 9am UTC) or can be triggered manually:
 
@@ -34,12 +34,21 @@ gh workflow run "Release Proposal Dispatch"
 gh workflow run "Release Proposal Dispatch" -f version_type=minor
 ```
 
-This workflow:
+The workflow produces a **draft release PR** for human review. It:
+
 - Scans all PRs merged since the last `v*` tag
-- Classifies the version bump (patch/minor/major) using AI inference, or auto-selects `patch` for dependabot-only changes
-- Updates `CHANGELOG.md` with categorized PR entries
+- Suggests a version bump (patch/minor/major) using AI inference, or auto-selects `patch` for dependabot-only changes
+- Generates a `CHANGELOG.md` entry with links to each included PR
 - Bumps `package.json` / `package-lock.json` if present
 - Creates a signed commit and opens a release PR
+
+The release PR body includes:
+
+- **Version decision reasoning** — the AI's justification for the suggested bump type (or why a default was chosen)
+- **Source PRs** — a categorized list of all merged PRs included in the release (non-dependabot and dependabot)
+- **Bump type and counts** — so reviewers can quickly verify the classification
+
+Reviewers should verify the suggested version bump is appropriate, edit the changelog if needed, and merge when satisfied. No release is created until the PR is merged.
 
 ### 2. Release (on merge)
 

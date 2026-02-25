@@ -23,9 +23,9 @@ Reusable GitHub Actions workflows for automated releases. Includes AI-powered ve
 
 ## Release Proposal Workflow
 
-The `release-proposal.yaml` workflow automates the creation of release PRs with:
+The `release-proposal.yaml` workflow generates a **release PR for manual review** — it suggests a version bump with justification, but no release is created until a human reviews and merges the PR. Features:
 
-- **AI-powered version classification** using [`actions/ai-inference`](https://github.com/actions/ai-inference) to analyze merged PRs and suggest `patch`, `minor`, or `major` bumps
+- **AI-powered version suggestion** using [`actions/ai-inference`](https://github.com/actions/ai-inference) to analyze merged PRs and suggest `patch`, `minor`, or `major` bumps, with reasoning included in the PR body
 - **Dependabot auto-detection** — if all merged PRs are from dependabot, automatically selects `patch`
 - **Signed commits** — uses the GitHub API to create commits (automatically signed by GitHub)
 - **CHANGELOG.md generation** — adds a new version entry with categorized PR links
@@ -105,7 +105,7 @@ jobs:
 5. Updates `CHANGELOG.md` with categorized PR entries
 6. Bumps `package.json` and `package-lock.json` (if they exist)
 7. Creates a **signed commit** via the GitHub REST API (tree + blob + commit)
-8. Opens a PR from `automated-release/v<version>` to `main`
+8. Opens a PR from `automated-release/v<version>` to `main` with version reasoning, source PRs, and bump justification for reviewer approval
 
 ### Permissions Required
 
