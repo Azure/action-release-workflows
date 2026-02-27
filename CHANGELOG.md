@@ -1,5 +1,14 @@
 # Change Log
 
+## [1.0.3] - 2025-06-20
+- Remove --no-bin-links flag for ncc
+
+## [1.0.2] - 2024-04-15
+- Bump mindsers/changelog-reader-action to node 20 from node 16
+
+## [1.0.1] - 2024-03-06
+- #12 Add major version tags that update on minor/patch releases
+
 ## [1.0.0] - 2024-02-22
 - upgrade to node20
 - #9 Bump mukunku/tag-exists-action from 1.5.0 to 1.6.0

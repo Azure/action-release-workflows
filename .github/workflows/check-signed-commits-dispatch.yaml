@@ -1,0 +1,8 @@
+name: Check Signed Commits
+
+on:
+  pull_request:
+
+jobs:
+  signed:
+    uses: ./.github/workflows/check_signed_commits.yaml
