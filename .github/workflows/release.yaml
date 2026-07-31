@@ -23,7 +23,7 @@ jobs:
         uses: mukunku/tag-exists-action@5c39604fe8aef7e65acb6fbcf96ec580f7680313 # v1.7.0
         id: tag-exists
         with:
-          tag: ${{ needs.changelog.outputs.version }}
+          tag: v${{ needs.changelog.outputs.version }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   createRelease:
@@ -33,6 +33,6 @@ jobs:
     if: needs.checkVersion.outputs.exists == 'false'
     uses: ./.github/workflows/create_release.yaml
     with:
-      branch: ${{ github.ref }}
-      version: ${{ needs.changelog.outputs.version }}
+      branch: ${{ github.ref_name }}
+      version: v${{ needs.changelog.outputs.version }}
       body: ${{ needs.changelog.outputs.body }}
