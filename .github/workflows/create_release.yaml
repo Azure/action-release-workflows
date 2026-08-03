@@ -32,10 +32,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      # release-action's `commit` expects a branch name or SHA, not a fully
+      # qualified ref. Strip a leading refs/heads/ so callers may pass either.
+      - id: normalize
+        env:
+          INPUT_BRANCH: ${{ inputs.branch }}
+        run: echo "commit=${INPUT_BRANCH#refs/heads/}" >> "$GITHUB_OUTPUT"
+
       - uses: ncipollo/release-action@b7eabc95ff50cbeeedec83973935c8f306dfcd0b # v1.20.0
         with:
           name: ${{ inputs.version }}
           tag: ${{ inputs.version }}
           body: ${{ inputs.body }}
-          commit: refs/heads/${{ inputs.branch }}
+          commit: ${{ steps.normalize.outputs.commit }}
           prerelease: ${{ inputs.prerelease == 'prereleased' }}
