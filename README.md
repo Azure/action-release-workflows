@@ -123,7 +123,7 @@ permissions:
 ```yaml
 jobs:
   changelog:
-    uses: <owner>/<repo>/.github/workflows/extract_changelog.yaml@main
+    uses: Azure/action-release-workflows/.github/workflows/extract_changelog.yaml@main
     with:
       changelogPath: ./CHANGELOG.md
 ```
@@ -135,7 +135,7 @@ jobs:
 ```yaml
 jobs:
   release:
-    uses: <owner>/<repo>/.github/workflows/create_release.yaml@main
+    uses: Azure/action-release-workflows/.github/workflows/create_release.yaml@main
     with:
       branch: ${{ github.ref }}
       version: v1.2.3
@@ -148,7 +148,7 @@ jobs:
 ```yaml
 jobs:
   signed:
-    uses: <owner>/<repo>/.github/workflows/check_signed_commits.yaml@main
+    uses: Azure/action-release-workflows/.github/workflows/check_signed_commits.yaml@main
 ```
 
 Verifies all commits in a PR are signed. Posts a comment listing unsigned commits if any are found.
