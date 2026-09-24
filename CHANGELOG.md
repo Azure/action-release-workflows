@@ -1,5 +1,16 @@
 # Change Log
 
+## [1.2.0] - 2026-09-24
+
+### Fixed
+
+- #38 Strip refs/heads/ prefix from commit target
+- #40 Set up node 24 before npm install
+
+### Security
+
+- #39 Bump actions/ai-inference from 2.1.1 to 3
+
 ## [1.1.0] - 2026-07-30
 
 ### Added
