@@ -25,6 +25,14 @@ jobs:
           git config user.name "GitHub Action"
           git config user.email "github-action@users.noreply.github.com"
 
+      # Node 24 matches the `using: node24` runtime the released actions declare,
+      # and ships npm >= 11.10.0. Without this the job runs on the runner default
+      # (node 22 / npm 10.x), which fails `npm install` for callers that set
+      # engine-strict=true alongside an "npm": ">=11.10.0" engines constraint.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
       - name: install dependencies
         run: |
           npm install
