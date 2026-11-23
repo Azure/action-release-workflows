@@ -7,6 +7,24 @@ on:
         required: true
         type: string
         description: The path to CHANGELOG.md
+      prepareOnly:
+        required: false
+        default: false
+        type: boolean
+        description: Prepare the built release commit without publishing or moving tags
+    outputs:
+      branch:
+        description: The prepared release branch
+        value: ${{ jobs.createBranch.outputs.branch }}
+      commit:
+        description: The final release commit containing the built artifacts
+        value: ${{ jobs.createBranch.outputs.commit }}
+      version:
+        description: The release version with its v prefix
+        value: v${{ jobs.extractChangelog.outputs.version }}
+      body:
+        description: The release notes
+        value: ${{ jobs.extractChangelog.outputs.body }}
 
 jobs:
   extractChangelog:
@@ -31,45 +49,43 @@ jobs:
     if: needs.checkVersion.outputs.exists == 'false'
     uses: ./.github/workflows/create_js_branch.yaml
     with:
-        version: v${{ needs.extractChangelog.outputs.version }}
+      version: v${{ needs.extractChangelog.outputs.version }}
   createRelease:
     needs: [checkVersion, extractChangelog, createBranch]
     permissions:
       contents: write
-    if: needs.checkVersion.outputs.exists == 'false'
+    if: needs.checkVersion.outputs.exists == 'false' && !inputs.prepareOnly
     uses: ./.github/workflows/create_release.yaml
     with:
       branch: releases/v${{ needs.extractChangelog.outputs.version }}
       version: v${{ needs.extractChangelog.outputs.version }}
       body: ${{ needs.extractChangelog.outputs.body }}
   updateMajorTag:
-     runs-on: ubuntu-latest
-     permissions:
-       contents: write
-     needs: [extractChangelog, createBranch, createRelease]
-     steps:
-       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-         with:
-           ref: releases/v${{ needs.extractChangelog.outputs.version }}
-       - name: get major version tag
-         id: major-version-tag
-         env:
-           NEW_RELEASE_TAG: ${{ needs.extractChangelog.outputs.version }}
-         run:
-           echo "MAJOR_VERSION_TAG=v${NEW_RELEASE_TAG%%.*}" >> "$GITHUB_OUTPUT"
-       - name: delete old major tag
-         continue-on-error: true
-         env:
-            GH_TOKEN: ${{ github.token }}
-            MAJOR_VERSION_TAG: ${{ steps.major-version-tag.outputs.MAJOR_VERSION_TAG }}
-         run:
-           git push origin :refs/tags/$MAJOR_VERSION_TAG
-       - name: create new major tag
-         env:
-            GH_TOKEN: ${{ github.token }}
-            MAJOR_VERSION_TAG: ${{ steps.major-version-tag.outputs.MAJOR_VERSION_TAG }}
-         run: |
-           git config user.name 'github-actions[bot]'
-           git config user.email 'github-actions[bot]@users.noreply.github.com'
-           git tag -a $MAJOR_VERSION_TAG  -m "Latest $MAJOR_VERSION_TAG Release"
-           git push origin refs/tags/$MAJOR_VERSION_TAG
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    needs: [extractChangelog, createBranch, createRelease]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: releases/v${{ needs.extractChangelog.outputs.version }}
+      - name: get major version tag
+        id: major-version-tag
+        env:
+          NEW_RELEASE_TAG: ${{ needs.extractChangelog.outputs.version }}
+        run: echo "MAJOR_VERSION_TAG=v${NEW_RELEASE_TAG%%.*}" >> "$GITHUB_OUTPUT"
+      - name: delete old major tag
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAJOR_VERSION_TAG: ${{ steps.major-version-tag.outputs.MAJOR_VERSION_TAG }}
+        run: git push origin :refs/tags/$MAJOR_VERSION_TAG
+      - name: create new major tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAJOR_VERSION_TAG: ${{ steps.major-version-tag.outputs.MAJOR_VERSION_TAG }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag -a $MAJOR_VERSION_TAG  -m "Latest $MAJOR_VERSION_TAG Release"
+          git push origin refs/tags/$MAJOR_VERSION_TAG

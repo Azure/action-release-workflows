@@ -1,0 +1,117 @@
+name: check release candidate
+
+on:
+  workflow_call:
+    inputs:
+      branch:
+        required: true
+        type: string
+      commit:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      checkName:
+        required: true
+        type: string
+      checkAppId:
+        required: true
+        type: number
+      timeoutMinutes:
+        required: false
+        default: 90
+        type: number
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 130
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - name: validate candidate and wait for the trusted result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_REPOSITORY: ${{ github.repository }}
+          CANDIDATE_BRANCH: ${{ inputs.branch }}
+          CANDIDATE_COMMIT: ${{ inputs.commit }}
+          CANDIDATE_VERSION: ${{ inputs.version }}
+          REQUIRED_CHECK_NAME: ${{ inputs.checkName }}
+          REQUIRED_CHECK_APP_ID: ${{ inputs.checkAppId }}
+          CHECK_TIMEOUT_MINUTES: ${{ inputs.timeoutMinutes }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          import time
+          from urllib.parse import quote
+
+          def api(endpoint, paginate=False):
+              command = ['gh', 'api', '--method', 'GET', endpoint]
+              if paginate:
+                  command.extend(['--paginate', '--slurp'])
+              try:
+                  result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=60)
+              except subprocess.CalledProcessError as error:
+                  raise RuntimeError(f'GitHub API request failed: {error.stderr}') from error
+              return json.loads(result.stdout)
+
+          def verify_branch(repository, branch, commit):
+              ref = api(f'repos/{repository}/git/ref/heads/{quote(branch, safe="/")}')
+              if ref['object']['type'] != 'commit' or ref['object']['sha'] != commit:
+                  raise ValueError('Release branch no longer matches the candidate commit')
+
+          def wait_for_check(repository, branch, commit, name, app_id, timeout):
+              deadline = time.monotonic() + timeout
+              while time.monotonic() < deadline:
+                  verify_branch(repository, branch, commit)
+                  pages = api(
+                      f'repos/{repository}/commits/{commit}/check-runs?check_name={quote(name, safe="")}&filter=all&per_page=100',
+                      paginate=True,
+                  )
+                  matching = [
+                      check for page in pages for check in page['check_runs']
+                      if check['name'] == name and check['head_sha'] == commit
+                      and (check.get('app') or {}).get('id') == app_id
+                  ]
+                  if matching:
+                      latest = max(matching, key=lambda check: check['id'])
+                      if latest['status'] == 'completed':
+                          if latest['conclusion'] != 'success':
+                              raise ValueError(f"Required check concluded {latest['conclusion']}: {latest['html_url']}")
+                          verify_branch(repository, branch, commit)
+                          return latest['html_url']
+                  remaining = deadline - time.monotonic()
+                  if remaining > 0:
+                      time.sleep(min(30, remaining))
+              raise TimeoutError('No successful trusted check arrived for the candidate commit')
+
+          def main():
+              repository = os.environ['CANDIDATE_REPOSITORY']
+              branch = os.environ['CANDIDATE_BRANCH']
+              commit = os.environ['CANDIDATE_COMMIT']
+              version = os.environ['CANDIDATE_VERSION']
+              name = os.environ['REQUIRED_CHECK_NAME'].strip()
+              app = os.environ['REQUIRED_CHECK_APP_ID']
+              minutes = os.environ['CHECK_TIMEOUT_MINUTES']
+              if not re.fullmatch(r'v\d+\.\d+\.\d+', version):
+                  raise ValueError('The private-cluster gate requires a stable vX.Y.Z release')
+              if branch != f'releases/{version}' or not re.fullmatch(r'[0-9a-f]{40}', commit):
+                  raise ValueError('Expected the release branch and a full candidate commit SHA')
+              if not name or not re.fullmatch(r'[1-9][0-9]*', app):
+                  raise ValueError('A gated release requires a check name and trusted GitHub App ID')
+              if not re.fullmatch(r'[1-9][0-9]*', minutes) or int(minutes) > 120:
+                  raise ValueError('Check timeout must be between 1 and 120 minutes')
+
+              verify_branch(repository, branch, commit)
+              result = wait_for_check(repository, branch, commit, name, int(app), int(minutes) * 60)
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                  summary.write(f'Release candidate: `{branch}` at `{commit}`\n\n{result}\n')
+
+          if __name__ == '__main__':
+              main()
+          PY

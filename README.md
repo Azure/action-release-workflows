@@ -18,6 +18,8 @@ Reusable GitHub Actions workflows for automated releases. Includes AI-powered ve
 | `check_signed_commits.yaml` | `workflow_call` | Reusable: verifies all PR commits are signed |
 | `release_js_project.yaml` | `workflow_call` | Reusable: full JS project release (changelog, branch, release, major tag) |
 | `create_js_branch.yaml` | `workflow_call` | Reusable: creates a release branch with built JS artifacts |
+| `check_release_candidate.yaml` | `workflow_call` | Reusable: validates the candidate and waits for a check from an approved GitHub App |
+| `publish_js_project.yaml` | `workflow_call` | Reusable: publishes the prepared commit only after the trusted check succeeds |
 | `switch_js_branch.yaml` | `workflow_call` | Reusable: switches/creates a release branch (e.g. nightly) |
 | `nightly_release.yaml` | `workflow_call` | Reusable: nightly release to `releases/nightly` branch |
 
@@ -152,6 +154,112 @@ jobs:
 ```
 
 Verifies all commits in a PR are signed. Posts a comment listing unsigned commits if any are found.
+
+### Prepare, validate, and publish a JS release
+
+`release_js_project.yaml` keeps its existing automatic publication behavior unless
+`prepareOnly: true` is supplied. Preparation returns `branch`, `commit`, `version`,
+and `body`. The commit is recorded after the release bundle is built, committed,
+and pushed, not before the build. Existing preparation steps and the default
+publishing, major-tag, and prerelease behavior are preserved. Existing callers
+do not need Azure DevOps configuration or additional token permissions.
+
+For a protected release, separate preparation from publication:
+
+```text
+Prepare built commit
+        |
+Trusted bridge runs the external test for that commit
+        |
+GitHub check from the approved App on that commit
+        |
+publish_js_project.yaml validates the result and publishes that commit
+```
+
+The following is an activation example. Replace `REVIEWED_COMMIT_SHA` with the
+reviewed shared-workflow commit only after the external bridge is configured.
+It is not a working bridge or an Azure DevOps trigger.
+Keep the existing publisher until preparation, the automatic trusted test
+trigger, and gated publication can be switched together. Do not activate an
+intermediate preparation-only caller. The bridge must automatically queue the
+test after approved preparation; waiting for a result does not itself start it.
+
+```yaml
+jobs:
+  prepare:
+    permissions:
+      actions: read
+      contents: write
+    uses: Azure/action-release-workflows/.github/workflows/release_js_project.yaml@REVIEWED_COMMIT_SHA
+    with:
+      changelogPath: ./CHANGELOG.md
+      prepareOnly: true
+  publish:
+    needs: prepare
+    if: needs.prepare.outputs.commit != ''
+    permissions:
+      contents: write
+      checks: read
+    uses: Azure/action-release-workflows/.github/workflows/publish_js_project.yaml@REVIEWED_COMMIT_SHA
+    with:
+      branch: ${{ needs.prepare.outputs.branch }}
+      commit: ${{ needs.prepare.outputs.commit }}
+      version: ${{ needs.prepare.outputs.version }}
+      body: ${{ needs.prepare.outputs.body }}
+      checkName: '1ES private-cluster release gate'
+      checkAppId: ${{ fromJSON(vars.PRIVATE_CLUSTER_GATE_APP_ID || '0') }}
+      timeoutMinutes: 90
+```
+
+The gated publisher requires a nonempty check name and a positive GitHub App ID.
+There is no ungated fallback in `publish_js_project.yaml`. It accepts only the
+latest matching check run from that App on the candidate SHA, with a completed
+`success` conclusion. Commit statuses or checks from other Apps cannot satisfy it.
+Missing results time out; newer failed, cancelled, or pending runs do not reuse an
+older success. The timeout must be between 1 and 120 minutes.
+This opt-in private-cluster flow supports stable `vX.Y.Z` releases, matching the
+1ES candidate checks. It does not introduce prerelease publishing behavior.
+
+The release branch must still match the candidate. Publication uses the full SHA
+rather than a branch name, and major-tag publication also checks the version tag.
+A branch change detected before publication stops the job; pinning the tag target
+to the SHA prevents a later branch movement from selecting untested code.
+
+Only the new gated publisher uses the stricter tag update. It verifies the
+release branch and version tag, reads the current major-tag object, and replaces
+that single remote ref with an explicit `--force-with-lease=<ref>:<old-object>` guard.
+It never deletes the remote major tag first. A rejected push leaves the existing
+tag in place, and a concurrent change rejects the update instead of being overwritten.
+For a new major tag, the empty expected object requires the ref to remain absent.
+Version tags are not force-updated.
+
+The optional `expectedCommit` input to `create_release.yaml` also applies only
+when explicitly supplied. The existing automatic release workflow does not set
+it or call the new gate/tag helpers. General hardening of the legacy publisher
+and corrections to its prerelease behavior are separate changes, not part of
+this opt-in integration.
+
+The trusted bridge is external to these workflows. It must authorize the
+preparation run and approved source revision, queue the exact built candidate
+using a governed definition, and report a SHA-bound check using the configured
+App. Branch activity or a caller-provided SHA is not authorization to run
+privileged code. Define pipeline/service-connection checks and queue permissions
+outside candidate-controlled YAML. Failed or cancelled external runs must be
+reported, not silently omitted. These workflows grant no Azure permissions and do
+not queue Azure DevOps pipelines.
+
+For the k8s-deploy 1ES pipeline, select the reviewed definition revision as the
+Azure DevOps `self` repository revision. Pass the preparation outputs separately
+as `releaseCandidateBranch` and `releaseCandidateCommit`. The pipeline checks out
+that candidate in a separate directory; its `Build.SourceVersion` identifies the
+definition revision, not the action being tested. Do not load pipeline YAML or
+cleanup scripts from the candidate checkout.
+
+Run the local contract tests with:
+
+```bash
+python3 -B -m unittest discover -s tests -v
+```
 
 ## Contributing
 

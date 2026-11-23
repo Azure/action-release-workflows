@@ -20,6 +20,11 @@ on:
         default: false
         type: boolean
         description: Whether the release is a prerelease
+      expectedCommit:
+        required: false
+        default: ""
+        type: string
+        description: When set, require the branch to still point to this full commit and tag this commit
 
 jobs:
   release:
@@ -37,7 +42,20 @@ jobs:
       - id: normalize
         env:
           INPUT_BRANCH: ${{ inputs.branch }}
-        run: echo "commit=${INPUT_BRANCH#refs/heads/}" >> "$GITHUB_OUTPUT"
+          EXPECTED_COMMIT: ${{ inputs.expectedCommit }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          branch=${INPUT_BRANCH#refs/heads/}
+          commit=$branch
+          if [[ -n "$EXPECTED_COMMIT" ]]; then
+            [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "Expected a full commit SHA" >&2; exit 1; }
+            actual=$(git ls-remote origin "refs/heads/$branch" | cut -f1)
+            [[ "$actual" = "$EXPECTED_COMMIT" ]] || { echo "Release branch no longer matches the tested commit" >&2; exit 1; }
+            git push origin "$EXPECTED_COMMIT:refs/tags/$RELEASE_VERSION"
+            commit=$EXPECTED_COMMIT
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
       - uses: ncipollo/release-action@b7eabc95ff50cbeeedec83973935c8f306dfcd0b # v1.20.0
         with:
