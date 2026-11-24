@@ -7,10 +7,20 @@ on:
         required: true
         type: string
         description: The version of the release
+    outputs:
+      branch:
+        description: The prepared release branch
+        value: ${{ jobs.branch.outputs.branch }}
+      commit:
+        description: The final release commit containing the built artifacts
+        value: ${{ jobs.branch.outputs.commit }}
 
 jobs:
   branch:
     runs-on: ubuntu-latest
+    outputs:
+      branch: ${{ steps.candidate.outputs.branch }}
+      commit: ${{ steps.candidate.outputs.commit }}
     env:
       BRANCH: releases/${{ inputs.version }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -55,3 +65,12 @@ jobs:
           git add .
           git commit -m "build"
           git push origin ${BRANCH}
+
+      - name: record release candidate
+        id: candidate
+        run: |
+          set -euo pipefail
+          commit=$(git rev-parse HEAD)
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "commit=${commit}" >> "$GITHUB_OUTPUT"
+          printf 'Release candidate: `%s` at `%s`\n' "$BRANCH" "$commit" >> "$GITHUB_STEP_SUMMARY"

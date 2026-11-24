@@ -1,0 +1,88 @@
+name: publish prepared JS project
+
+on:
+  workflow_call:
+    inputs:
+      branch:
+        required: true
+        type: string
+      commit:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      body:
+        required: true
+        type: string
+      checkName:
+        required: true
+        type: string
+      checkAppId:
+        required: true
+        type: number
+      timeoutMinutes:
+        required: false
+        default: 90
+        type: number
+
+jobs:
+  checkCandidate:
+    permissions:
+      contents: read
+      checks: read
+    uses: ./.github/workflows/check_release_candidate.yaml
+    with:
+      branch: ${{ inputs.branch }}
+      commit: ${{ inputs.commit }}
+      version: ${{ inputs.version }}
+      checkName: ${{ inputs.checkName }}
+      checkAppId: ${{ inputs.checkAppId }}
+      timeoutMinutes: ${{ inputs.timeoutMinutes }}
+  createRelease:
+    needs: checkCandidate
+    permissions:
+      contents: write
+    uses: ./.github/workflows/create_release.yaml
+    with:
+      branch: ${{ inputs.branch }}
+      expectedCommit: ${{ inputs.commit }}
+      version: ${{ inputs.version }}
+      body: ${{ inputs.body }}
+  updateMajorTag:
+    needs: createRelease
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+      - name: replace the major tag without deleting the remote ref
+        env:
+          RELEASE_BRANCH: ${{ inputs.branch }}
+          CANDIDATE_COMMIT: ${{ inputs.commit }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "Expected a full candidate commit" >&2; exit 1; }
+          [[ "$RELEASE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]] || { echo "Expected a release version" >&2; exit 1; }
+          [[ "$RELEASE_BRANCH" = "releases/$RELEASE_VERSION" ]] || { echo "Unexpected release branch" >&2; exit 1; }
+
+          actual=$(git ls-remote --heads origin "refs/heads/$RELEASE_BRANCH" | cut -f1)
+          [[ "$actual" = "$CANDIDATE_COMMIT" ]] || { echo "Release branch changed after validation" >&2; exit 1; }
+          git fetch --no-tags origin "refs/tags/$RELEASE_VERSION"
+          [[ "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$CANDIDATE_COMMIT" ]] || { echo "Release tag does not match the tested commit" >&2; exit 1; }
+
+          major_tag=${RELEASE_VERSION%%.*}
+          major_ref="refs/tags/$major_tag"
+          previous=$(git ls-remote --refs origin "$major_ref" | cut -f1)
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          # Checkout may contain a local tag; keep the remote ref intact.
+          if git show-ref --verify --quiet "$major_ref"; then
+            git tag --delete "$major_tag"
+          fi
+          git tag -a "$major_tag" "$CANDIDATE_COMMIT" -m "Latest $major_tag Release"
+          # The explicit old object also protects concurrent updates and first creation.
+          git push --force-with-lease="$major_ref:$previous" origin "$major_ref:$major_ref"
